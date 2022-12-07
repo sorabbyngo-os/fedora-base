@@ -1,0 +1,31 @@
+From a3d11f7a53811e42cbe36a91a1583a723c2fe108 Mon Sep 17 00:00:00 2001
+Message-Id: <a3d11f7a53811e42cbe36a91a1583a723c2fe108.1670413818.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Mon, 6 Jun 2022 12:04:15 +0300
+Subject: [PATCH] Fix potential uninitialized variable use in
+ rpmtsImportPubkey()
+
+Commit d703160334ff545ce8bf7475da5689422f43dacc introduced a new step
+to key import which can fail before keyring is initialized.
+
+Always initialize your variables, never need "fixes" like this.
+---
+ lib/rpmts.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/rpmts.c b/lib/rpmts.c
+index 0b6b7ac6b..b1c80b9c8 100644
+--- a/lib/rpmts.c
++++ b/lib/rpmts.c
+@@ -609,7 +609,7 @@ rpmRC rpmtsImportPubkey(const rpmts ts, const unsigned char * pkt, size_t pktlen
+     rpmPubkey *subkeys = NULL;
+     int subkeysCount = 0;
+     rpmVSFlags oflags = rpmtsVSFlags(ts);
+-    rpmKeyring keyring;
++    rpmKeyring keyring = NULL;
+     rpmtxn txn = rpmtxnBegin(ts, RPMTXN_WRITE);
+     int krc, i;
+ 
+-- 
+2.38.1
+
