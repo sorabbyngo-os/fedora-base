@@ -1,0 +1,82 @@
+From de0b9d142ad8bada4d49afeee95616fee265d44f Mon Sep 17 00:00:00 2001
+Message-Id: <de0b9d142ad8bada4d49afeee95616fee265d44f.1673264828.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Mon, 9 Jan 2023 12:56:34 +0200
+Subject: [PATCH] Generate Python egg-info from automake builds
+
+To compensate for the loss of egg-info from the python distutils build,
+create one ourselves.
+
+This is effectively a backport of e31fb5b75898bfa09180dba02475c6d01764d94f
+which dismissed the need for an automake version, but unfortunately Python
+3.12 and automake-based rpm versions do co-exist in the same time-space
+continuum and we'll have to deal with this in rpm 4.18 as well.
+
+As to why not just use distutils from python-setuptools: that variant
+turns the egg-info into a directory, which in rpm is a one-way street.
+And we don't need that multi megabyte Python library to fill in these
+couple of values, really.
+---
+ configure.ac           |  1 +
+ python/Makefile.am     |  9 ++++++++-
+ python/rpm.egg-info.in | 10 ++++++++++
+ 3 files changed, 19 insertions(+), 1 deletion(-)
+ create mode 100644 python/rpm.egg-info.in
+
+diff --git a/configure.ac b/configure.ac
+index fbbfead89..5f5842590 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -964,5 +964,6 @@ AC_CONFIG_FILES([Makefile
+  	tests/Makefile
+  	plugins/Makefile
+ 	python/setup.py
++	python/rpm.egg-info
+   ])
+ AC_OUTPUT
+diff --git a/python/Makefile.am b/python/Makefile.am
+index ec3608134..04168406d 100644
+--- a/python/Makefile.am
++++ b/python/Makefile.am
+@@ -3,14 +3,21 @@
+ include $(top_srcdir)/rpm.am
+ AM_CFLAGS = @RPMCFLAGS@
+ 
+-EXTRA_DIST = rpm/__init__.py rpm/transaction.py
++CLEANFILES =
++EXTRA_DIST = rpm/__init__.py rpm/transaction.py rpm.egg-info.in
+ 
+ AM_CPPFLAGS = -I$(top_srcdir)/include/
+ AM_CPPFLAGS += -I$(top_srcdir)/python
+ AM_CPPFLAGS += @PYTHON_CFLAGS@
+ 
++egginfo = $(PACKAGE_NAME)-$(PACKAGE_VERSION)-py$(PYTHON_VERSION).egg-info
++$(egginfo):
++	cat rpm.egg-info > $(egginfo)
++CLEANFILES += $(egginfo)
++
+ pkgpyexec_LTLIBRARIES = _rpm.la
+ pkgpyexec_DATA = rpm/__init__.py rpm/transaction.py
++pyexec_DATA = $(egginfo)
+ 
+ _rpm_la_LDFLAGS = -module -avoid-version -shared
+ _rpm_la_LIBADD = \
+diff --git a/python/rpm.egg-info.in b/python/rpm.egg-info.in
+new file mode 100644
+index 000000000..838ce5854
+--- /dev/null
++++ b/python/rpm.egg-info.in
+@@ -0,0 +1,10 @@
++Metadata-Version: 1.0
++Name: @PACKAGE_NAME@
++Version: @PACKAGE_VERSION@
++Summary: Python bindings for rpm
++Home-page: @PACKAGE_URL@
++Author: Rpm community
++Author-email: rpm-maint@lists.rpm.org
++License: GNU General Public License v2
++Description: Python bindings for rpm
++Platform: UNKNOWN
+-- 
+2.39.0
+
