@@ -32,7 +32,7 @@
 
 %global rpmver 4.18.0
 #global snapver rc1
-%global baserelease 8
+%global baserelease 9
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
