@@ -1,0 +1,44 @@
+From 31356bf81c247871d6e4461565f4b33c1e6a145a Mon Sep 17 00:00:00 2001
+Message-Id: <31356bf81c247871d6e4461565f4b33c1e6a145a.1676544357.git.pmatilai@redhat.com>
+In-Reply-To: <3103d307063c71ff7791c2a59aacd41cfa05285c.1676544357.git.pmatilai@redhat.com>
+References: <3103d307063c71ff7791c2a59aacd41cfa05285c.1676544357.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Thu, 16 Feb 2023 12:25:24 +0200
+Subject: [PATCH 2/2] Disable debuginfod server lookups in build and dependency
+ generator scripts
+
+With recent elfutils (0.182 or so) various seemingly innocuous tools
+such as `readelf` like to do network lookups for ELF symbol information.
+There's no circumstance where we'd want that to happen during rpmbuild,
+so disable these lookups during all spec build scriptlets and also
+dependency generator children.
+---
+ build/rpmfc.c | 1 +
+ macros.in     | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/build/rpmfc.c b/build/rpmfc.c
+index 06205469c..a69e81f44 100644
+--- a/build/rpmfc.c
++++ b/build/rpmfc.c
+@@ -316,6 +316,7 @@ static int getOutputFrom(ARGV_t argv,
+ 	rpmlog(RPMLOG_DEBUG, "\texecv(%s) pid %d\n",
+                         argv[0], (unsigned)getpid());
+ 
++	unsetenv("DEBUGINFOD_URLS");
+ 	if (buildRoot)
+ 	    setenv("RPM_BUILD_ROOT", buildRoot, 1);
+ 
+diff --git a/macros.in b/macros.in
+index 7398a0496..307086a2b 100644
+--- a/macros.in
+@@ -724,6 +724,7 @@ package or when debugging this package.\
+   LANG=C\
+   export LANG\
+   unset CDPATH DISPLAY ||:\
++  unset DEBUGINFOD_URLS ||:\
+   %{?buildroot:RPM_BUILD_ROOT=\"%{u2p:%{buildroot}}\"\
+   export RPM_BUILD_ROOT}\
+   %{?_javaclasspath:CLASSPATH=\"%{_javaclasspath}\"\
++++ b/macros.in
+-- 
