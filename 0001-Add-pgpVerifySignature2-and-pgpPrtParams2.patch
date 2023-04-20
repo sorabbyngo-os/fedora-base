@@ -1,0 +1,267 @@
+From e75ae70ef1a152dac9a066506cafd2bbf7b2565e Mon Sep 17 00:00:00 2001
+Message-Id: <e75ae70ef1a152dac9a066506cafd2bbf7b2565e.1681989428.git.pmatilai@redhat.com>
+From: "Neal H. Walfield" <neal@pep.foundation>
+Date: Wed, 12 Apr 2023 17:56:19 +0200
+Subject: [PATCH] Add pgpVerifySignature2() and pgpPrtParams2()
+
+Add new functions pgpVerifySignature2() and pgpPrtParams2(), which are
+like their earlier versions, but optionally return descriptive error
+messages (in the case of failure) or lints (in the case of success).
+Adjust tests accordingly.
+
+This requires rpm-sequoia 1.4 or later.
+
+See https://github.com/rpm-software-management/rpm-sequoia/issues/39
+and
+https://github.com/rpm-software-management/rpm/issues/2127#issuecomment-1482646398
+
+Fixes #2483.
+
+This is a backport of commit 87b9e0c28c3df3937f6676ee1b4164d6154dd9d3
+---
+ configure.ac            |  2 +-
+ include/rpm/rpmpgp.h    | 23 +++++++++++++++++++++++
+ lib/rpmvs.c             | 19 ++++++++++++++++---
+ rpmio/rpmkeyring.c      |  7 ++++++-
+ rpmio/rpmpgp_internal.c | 15 +++++++++++++++
+ rpmio/rpmpgp_sequoia.c  |  7 +++++++
+ tests/rpmi.at           | 10 ++++++++--
+ tests/rpmsigdig.at      | 20 +++++++++++++++++---
+ 9 files changed, 95 insertions(+), 10 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index e6676c581..1d173e4e2 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -384,7 +384,7 @@ AC_SUBST(WITH_LIBGCRYPT_LIB)
+ WITH_RPM_SEQUOIA_INCLUDE=
+ WITH_RPM_SEQUOIA_LIB=
+ if test "$with_crypto" = sequoia ; then
+-  PKG_CHECK_MODULES([RPM_SEQUOIA], [rpm-sequoia], [have_rpm_sequoia=yes], [have_rpm_sequoia=no])
++  PKG_CHECK_MODULES([RPM_SEQUOIA], [rpm-sequoia >= 1.4.0], [have_rpm_sequoia=yes], [have_rpm_sequoia=no])
+   if test "$have_rpm_sequoia" = "yes"; then
+      WITH_RPM_SEQUOIA_INCLUDE="$RPM_SEQUOIA_CFLAGS"
+      WITH_RPM_SEQUOIA_LIB="$RPM_SEQUOIA_LIBS"
+diff --git a/include/rpm/rpmpgp.h b/include/rpm/rpmpgp.h
+index a3238a643..3352129b8 100644
+--- a/include/rpm/rpmpgp.h
++++ b/include/rpm/rpmpgp.h
+@@ -1013,6 +1013,18 @@ int pgpPubkeyKeyID(const uint8_t * pkt, size_t pktlen, pgpKeyID_t keyid);
+ int pgpPrtParams(const uint8_t *pkts, size_t pktlen, unsigned int pkttype,
+ 		 pgpDigParams * ret);
+ 
++/** \ingroup rpmpgp
++ * Parse a OpenPGP packet(s).
++ * @param pkts		OpenPGP packet(s)
++ * @param pktlen	OpenPGP packet(s) length (no. of bytes)
++ * @param pkttype	Expected packet type (signature/key) or 0 for any
++ * @param[out] ret	signature/pubkey packet parameters on success (alloced)
++ * @param[out] lints	error messages and lints
++ * @return		-1 on error, 0 on success
++ */
++int pgpPrtParams2(const uint8_t *pkts, size_t pktlen, unsigned int pkttype,
++		 pgpDigParams * ret, char **lints);
++
+ /** \ingroup rpmpgp
+  * Parse subkey parameters from OpenPGP packet(s).
+  * @param pkts		OpenPGP packet(s)
+@@ -1191,6 +1203,17 @@ const uint8_t *pgpDigParamsSignID(pgpDigParams digp);
+  */
+ const char *pgpDigParamsUserID(pgpDigParams digp);
+ 
++/** \ingroup rpmpgp
++ * Verify a PGP signature and return a error message or lint.
++ * @param key		public key
++ * @param sig		signature
++ * @param hashctx	digest context
++ * @param lints	error messages and lints
++ * @return 		RPMRC_OK on success
++ */
++rpmRC pgpVerifySignature2(pgpDigParams key, pgpDigParams sig, DIGEST_CTX hashctx,
++                          char **lints);
++
+ /** \ingroup rpmpgp
+  * Retrieve the object's version.
+  *
+diff --git a/lib/rpmvs.c b/lib/rpmvs.c
+index a1425ea17..9b2106927 100644
+--- a/lib/rpmvs.c
++++ b/lib/rpmvs.c
+@@ -193,10 +193,23 @@ static void rpmsinfoInit(const struct vfyinfo_s *vinfo,
+     }
+ 
+     if (sinfo->type == RPMSIG_SIGNATURE_TYPE) {
+-	if (pgpPrtParams(data, dlen, PGPTAG_SIGNATURE, &sinfo->sig)) {
+-	    rasprintf(&sinfo->msg, _("%s tag %u: invalid OpenPGP signature"),
+-		    origin, td->tag);
++	char *lints = NULL;
++        int ec = pgpPrtParams2(data, dlen, PGPTAG_SIGNATURE, &sinfo->sig, &lints);
++	if (ec) {
++	    if (lints) {
++		rasprintf(&sinfo->msg,
++			("%s tag %u: invalid OpenPGP signature: %s"),
++			origin, td->tag, lints);
++		free(lints);
++	    } else {
++		rasprintf(&sinfo->msg,
++			_("%s tag %u: invalid OpenPGP signature"),
++			origin, td->tag);
++	    }
+ 	    goto exit;
++	} else if (lints) {
++	    rpmlog(RPMLOG_WARNING, "%s\n", lints);
++	    free(lints);
+ 	}
+ 	sinfo->hashalgo = pgpDigParamsAlgo(sinfo->sig, PGPVAL_HASHALGO);
+ 	sinfo->keyid = pgpGrab(pgpDigParamsSignID(sinfo->sig)+4, 4);
+diff --git a/rpmio/rpmkeyring.c b/rpmio/rpmkeyring.c
+index db72892d9..712004bc8 100644
+--- a/rpmio/rpmkeyring.c
++++ b/rpmio/rpmkeyring.c
+@@ -328,7 +328,12 @@ rpmRC rpmKeyringVerifySig(rpmKeyring keyring, pgpDigParams sig, DIGEST_CTX ctx)
+ 	    pgpkey = key->pgpkey;
+ 
+ 	/* We call verify even if key not found for a signature sanity check */
+-	rc = pgpVerifySignature(pgpkey, sig, ctx);
++	char *lints = NULL;
++	rc = pgpVerifySignature2(pgpkey, sig, ctx, &lints);
++	if (lints) {
++	    rpmlog(rc ? RPMLOG_ERR : RPMLOG_WARNING, "%s\n", lints);
++	    free(lints);
++	}
+     }
+ 
+     if (keyring)
+diff --git a/rpmio/rpmpgp_internal.c b/rpmio/rpmpgp_internal.c
+index 0fcd220e4..a049c09b2 100644
+--- a/rpmio/rpmpgp_internal.c
++++ b/rpmio/rpmpgp_internal.c
+@@ -1095,6 +1095,14 @@ int pgpPrtParams(const uint8_t * pkts, size_t pktlen, unsigned int pkttype,
+     return rc;
+ }
+ 
++int pgpPrtParams2(const uint8_t * pkts, size_t pktlen, unsigned int pkttype,
++                  pgpDigParams * ret, char **lints)
++{
++    if (lints)
++        *lints = NULL;
++    return pgpPrtParams(pkts, pktlen, pkttype, ret);
++}
++
+ int pgpPrtParamsSubkeys(const uint8_t *pkts, size_t pktlen,
+ 			pgpDigParams mainkey, pgpDigParams **subkeys,
+ 			int *subkeysCount)
+@@ -1264,6 +1272,13 @@ rpmRC pgpVerifySig(pgpDig dig, DIGEST_CTX hashctx)
+ 			      pgpDigGetParams(dig, PGPTAG_SIGNATURE), hashctx);
+ }
+ 
++rpmRC pgpVerifySignature2(pgpDigParams key, pgpDigParams sig, DIGEST_CTX hashctx, char **lints)
++{
++    if (lints)
++        *lints = NULL;
++    return pgpVerifySignature(key, sig, hashctx);
++}
++
+ static pgpArmor decodePkts(uint8_t *b, uint8_t **pkt, size_t *pktlen)
+ {
+     const char * enc = NULL;
+diff --git a/rpmio/rpmpgp_sequoia.c b/rpmio/rpmpgp_sequoia.c
+index e01acd0e9..2141bbf30 100644
+--- a/rpmio/rpmpgp_sequoia.c
++++ b/rpmio/rpmpgp_sequoia.c
+@@ -36,6 +36,9 @@ W(uint32_t, pgpDigParamsCreationTime, (pgpDigParams digp), (digp))
+ W(rpmRC, pgpVerifySignature,
+   (pgpDigParams key, pgpDigParams sig, DIGEST_CTX hashctx),
+   (key, sig, hashctx))
++W(rpmRC, pgpVerifySignature2,
++  (pgpDigParams key, pgpDigParams sig, DIGEST_CTX hashctx, char **lints),
++  (key, sig, hashctx, lints))
+ W(int, pgpPubkeyKeyID,
+   (const uint8_t * pkt, size_t pktlen, pgpKeyID_t keyid),
+   (pkt, pktlen, keyid))
+@@ -51,6 +54,10 @@ W(int, pgpPubKeyCertLen,
+ W(int, pgpPrtParams,
+   (const uint8_t *pkts, size_t pktlen, unsigned int pkttype, pgpDigParams *ret),
+   (pkts, pktlen, pkttype, ret))
++W(int, pgpPrtParams2,
++  (const uint8_t *pkts, size_t pktlen, unsigned int pkttype, pgpDigParams *ret,
++   char **lints),
++  (pkts, pktlen, pkttype, ret, lints))
+ W(int, pgpPrtParamsSubkeys,
+   (const uint8_t *pkts, size_t pktlen,
+    pgpDigParams mainkey, pgpDigParams **subkeys,
+diff --git a/tests/rpmi.at b/tests/rpmi.at
+index 7c8f25eff..d67185d5b 100644
+--- a/tests/rpmi.at
++++ b/tests/rpmi.at
+@@ -254,7 +254,7 @@ AT_CLEANUP
+ 
+ AT_SETUP([rpm -U <corrupted signed 1>])
+ AT_KEYWORDS([install])
+-AT_CHECK([
++AT_CHECK_UNQUOTED([
+ RPMDB_INIT
+ 
+ pkg="hello-2.0-1.x86_64-signed.rpm"
+@@ -267,7 +267,13 @@ runroot rpm -U --ignorearch --ignoreos --nodeps \
+ ],
+ [1],
+ [],
+-[error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header RSA signature: BAD (package tag 268: invalid OpenPGP signature)
++[`if test x$PGP = xinternal; then
++    echo 'error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header RSA signature: BAD (package tag 268: invalid OpenPGP signature)'
++else
++    echo 'error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header RSA signature: BAD (package tag 268: invalid OpenPGP signature: Parsing an OpenPGP packet:'
++    echo '  Failed to parse Signature Packet'
++    echo '      because: Malformed packet: Subpacket extends beyond the end of the subpacket area)'
++fi`
+ error: /tmp/hello-2.0-1.x86_64-signed.rpm cannot be installed
+ ])
+ AT_CLEANUP
+diff --git a/tests/rpmsigdig.at b/tests/rpmsigdig.at
+index 5b1c6c4a6..e5482735a 100644
+--- a/tests/rpmsigdig.at
++++ b/tests/rpmsigdig.at
+@@ -539,7 +539,7 @@ AT_CLEANUP
+ # Test pre-built corrupted package verification (corrupted signature)
+ AT_SETUP([rpmkeys -Kv <corrupted signed> 1])
+ AT_KEYWORDS([rpmkeys digest signature])
+-AT_CHECK([
++AT_CHECK_UNQUOTED([
+ RPMDB_INIT
+ 
+ pkg="hello-2.0-1.x86_64-signed.rpm"
+@@ -553,14 +553,28 @@ runroot rpmkeys -Kv /tmp/${pkg}
+ ],
+ [1],
+ [/tmp/hello-2.0-1.x86_64-signed.rpm:
+-    Header RSA signature: BAD (package tag 268: invalid OpenPGP signature)
++`if test x$PGP = xinternal; then
++    echo '    Header RSA signature: BAD (package tag 268: invalid OpenPGP signature)'
++else
++    echo '    Header RSA signature: BAD (package tag 268: invalid OpenPGP signature: Parsing an OpenPGP packet:'
++    echo '  Failed to parse Signature Packet'
++    echo '      because: Signature appears to be created by a non-conformant OpenPGP implementation, see <https://github.com/rpm-software-management/rpm/issues/2351>.'
++    echo '      because: Malformed MPI: leading bit is not set: expected bit 1 to be set in        0 (0))'
++fi`
+     Header SHA256 digest: OK
+     Header SHA1 digest: OK
+     Payload SHA256 digest: OK
+     V4 RSA/SHA256 Signature, key ID 1964c5fc: NOKEY
+     MD5 digest: OK
+ /tmp/hello-2.0-1.x86_64-signed.rpm:
+-    Header RSA signature: BAD (package tag 268: invalid OpenPGP signature)
++`if test x$PGP = xinternal; then
++    echo '    Header RSA signature: BAD (package tag 268: invalid OpenPGP signature)'
++else
++    echo '    Header RSA signature: BAD (package tag 268: invalid OpenPGP signature: Parsing an OpenPGP packet:'
++    echo '  Failed to parse Signature Packet'
++    echo '      because: Signature appears to be created by a non-conformant OpenPGP implementation, see <https://github.com/rpm-software-management/rpm/issues/2351>.'
++    echo '      because: Malformed MPI: leading bit is not set: expected bit 1 to be set in        0 (0))'
++fi`
+     Header SHA256 digest: OK
+     Header SHA1 digest: OK
+     Payload SHA256 digest: OK
+-- 
+2.40.0
+
