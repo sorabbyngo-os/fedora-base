@@ -1,5 +1,4 @@
-From e75ae70ef1a152dac9a066506cafd2bbf7b2565e Mon Sep 17 00:00:00 2001
-Message-Id: <e75ae70ef1a152dac9a066506cafd2bbf7b2565e.1681989428.git.pmatilai@redhat.com>
+From 87b9e0c28c3df3937f6676ee1b4164d6154dd9d3 Mon Sep 17 00:00:00 2001
 From: "Neal H. Walfield" <neal@pep.foundation>
 Date: Wed, 12 Apr 2023 17:56:19 +0200
 Subject: [PATCH] Add pgpVerifySignature2() and pgpPrtParams2()
@@ -16,37 +15,36 @@ and
 https://github.com/rpm-software-management/rpm/issues/2127#issuecomment-1482646398
 
 Fixes #2483.
-
-This is a backport of commit 87b9e0c28c3df3937f6676ee1b4164d6154dd9d3
 ---
- configure.ac            |  2 +-
- include/rpm/rpmpgp.h    | 23 +++++++++++++++++++++++
- lib/rpmvs.c             | 19 ++++++++++++++++---
- rpmio/rpmkeyring.c      |  7 ++++++-
- rpmio/rpmpgp_internal.c | 15 +++++++++++++++
- rpmio/rpmpgp_sequoia.c  |  7 +++++++
- tests/rpmi.at           | 10 ++++++++--
- tests/rpmsigdig.at      | 20 +++++++++++++++++---
- 9 files changed, 95 insertions(+), 10 deletions(-)
+ ci/Dockerfile           |  2 ++
+ include/rpm/rpmpgp.h    | 23 +++++++++++++++++++
+ lib/rpmvs.c             | 19 +++++++++++++---
+ rpmio/CMakeLists.txt    |  2 +-
+ rpmio/rpmkeyring.c      |  7 +++++-
+ rpmio/rpmpgp_internal.c | 15 +++++++++++++
+ rpmio/rpmpgp_sequoia.c  |  7 ++++++
+ tests/rpmi.at           | 10 +++++++--
+ tests/rpmsigdig.at      | 50 +++++++++++++++++++++++++++++++----------
+ 9 files changed, 116 insertions(+), 19 deletions(-)
 
-diff --git a/configure.ac b/configure.ac
-index e6676c581..1d173e4e2 100644
---- a/configure.ac
-+++ b/configure.ac
-@@ -384,7 +384,7 @@ AC_SUBST(WITH_LIBGCRYPT_LIB)
- WITH_RPM_SEQUOIA_INCLUDE=
- WITH_RPM_SEQUOIA_LIB=
- if test "$with_crypto" = sequoia ; then
--  PKG_CHECK_MODULES([RPM_SEQUOIA], [rpm-sequoia], [have_rpm_sequoia=yes], [have_rpm_sequoia=no])
-+  PKG_CHECK_MODULES([RPM_SEQUOIA], [rpm-sequoia >= 1.4.0], [have_rpm_sequoia=yes], [have_rpm_sequoia=no])
-   if test "$have_rpm_sequoia" = "yes"; then
-      WITH_RPM_SEQUOIA_INCLUDE="$RPM_SEQUOIA_CFLAGS"
-      WITH_RPM_SEQUOIA_LIB="$RPM_SEQUOIA_LIBS"
+diff --git a/ci/Dockerfile b/ci/Dockerfile
+index d8f808962..552934fcd 100644
+--- a/ci/Dockerfile
++++ b/ci/Dockerfile
+@@ -7,6 +7,8 @@ RUN sed -i -e "s:^enabled=.$:enabled=0:g" /etc/yum.repos.d/*openh264.repo
+ # dummy for controlling per-repo gpgcheck via Semaphore setup
+ RUN sed -i -e "s:^gpgcheck=.$:gpgcheck=1:g" /etc/yum.repos.d/*.repo
+ RUN dnf -y update
++# until 1.4.0 lands in stable
++RUN dnf -y --enablerepo=updates-testing install "rpm-sequoia-devel >= 1.4.0"
+ RUN dnf -y install \
+   autoconf \
+   cmake \
 diff --git a/include/rpm/rpmpgp.h b/include/rpm/rpmpgp.h
-index a3238a643..3352129b8 100644
+index 87a2a5bd2..675cbad73 100644
 --- a/include/rpm/rpmpgp.h
 +++ b/include/rpm/rpmpgp.h
-@@ -1013,6 +1013,18 @@ int pgpPubkeyKeyID(const uint8_t * pkt, size_t pktlen, pgpKeyID_t keyid);
+@@ -1009,6 +1009,18 @@ int pgpPubkeyKeyID(const uint8_t * pkt, size_t pktlen, pgpKeyID_t keyid);
  int pgpPrtParams(const uint8_t *pkts, size_t pktlen, unsigned int pkttype,
  		 pgpDigParams * ret);
  
@@ -65,9 +63,9 @@ index a3238a643..3352129b8 100644
  /** \ingroup rpmpgp
   * Parse subkey parameters from OpenPGP packet(s).
   * @param pkts		OpenPGP packet(s)
-@@ -1191,6 +1203,17 @@ const uint8_t *pgpDigParamsSignID(pgpDigParams digp);
+@@ -1186,6 +1198,17 @@ pgpDigParams pgpDigParamsFree(pgpDigParams digp);
   */
- const char *pgpDigParamsUserID(pgpDigParams digp);
+ rpmRC pgpVerifySignature(pgpDigParams key, pgpDigParams sig, DIGEST_CTX hashctx);
  
 +/** \ingroup rpmpgp
 + * Verify a PGP signature and return a error message or lint.
@@ -81,8 +79,8 @@ index a3238a643..3352129b8 100644
 +                          char **lints);
 +
  /** \ingroup rpmpgp
-  * Retrieve the object's version.
-  *
+  * Return the type of a PGP signature. If `sig` is NULL, or is not a signature,
+  * returns -1.
 diff --git a/lib/rpmvs.c b/lib/rpmvs.c
 index a1425ea17..9b2106927 100644
 --- a/lib/rpmvs.c
@@ -114,11 +112,24 @@ index a1425ea17..9b2106927 100644
  	}
  	sinfo->hashalgo = pgpDigParamsAlgo(sinfo->sig, PGPVAL_HASHALGO);
  	sinfo->keyid = pgpGrab(pgpDigParamsSignID(sinfo->sig)+4, 4);
+diff --git a/rpmio/CMakeLists.txt b/rpmio/CMakeLists.txt
+index 2fb5794b0..6aa9ab1f1 100644
+--- a/rpmio/CMakeLists.txt
++++ b/rpmio/CMakeLists.txt
+@@ -21,7 +21,7 @@ if (WITH_INTERNAL_OPENPGP)
+ 		target_link_libraries(librpmio PRIVATE PkgConfig::LIBGCRYPT)
+ 	endif()
+ else()
+-	pkg_check_modules(RPMSEQUOIA REQUIRED IMPORTED_TARGET rpm-sequoia>=1.3.0)
++	pkg_check_modules(RPMSEQUOIA REQUIRED IMPORTED_TARGET rpm-sequoia>=1.4.0)
+ 	target_sources(librpmio PRIVATE rpmpgp_sequoia.c)
+ 	target_link_libraries(librpmio PRIVATE PkgConfig::RPMSEQUOIA)
+ endif()
 diff --git a/rpmio/rpmkeyring.c b/rpmio/rpmkeyring.c
-index db72892d9..712004bc8 100644
+index 166ee43a2..e3eb9e6ea 100644
 --- a/rpmio/rpmkeyring.c
 +++ b/rpmio/rpmkeyring.c
-@@ -328,7 +328,12 @@ rpmRC rpmKeyringVerifySig(rpmKeyring keyring, pgpDigParams sig, DIGEST_CTX ctx)
+@@ -276,7 +276,12 @@ rpmRC rpmKeyringVerifySig(rpmKeyring keyring, pgpDigParams sig, DIGEST_CTX ctx)
  	    pgpkey = key->pgpkey;
  
  	/* We call verify even if key not found for a signature sanity check */
@@ -133,10 +144,10 @@ index db72892d9..712004bc8 100644
  
      if (keyring)
 diff --git a/rpmio/rpmpgp_internal.c b/rpmio/rpmpgp_internal.c
-index 0fcd220e4..a049c09b2 100644
+index ce1d3c27d..82972bcc8 100644
 --- a/rpmio/rpmpgp_internal.c
 +++ b/rpmio/rpmpgp_internal.c
-@@ -1095,6 +1095,14 @@ int pgpPrtParams(const uint8_t * pkts, size_t pktlen, unsigned int pkttype,
+@@ -1043,6 +1043,14 @@ int pgpPrtParams(const uint8_t * pkts, size_t pktlen, unsigned int pkttype,
      return rc;
  }
  
@@ -151,8 +162,8 @@ index 0fcd220e4..a049c09b2 100644
  int pgpPrtParamsSubkeys(const uint8_t *pkts, size_t pktlen,
  			pgpDigParams mainkey, pgpDigParams **subkeys,
  			int *subkeysCount)
-@@ -1264,6 +1272,13 @@ rpmRC pgpVerifySig(pgpDig dig, DIGEST_CTX hashctx)
- 			      pgpDigGetParams(dig, PGPTAG_SIGNATURE), hashctx);
+@@ -1179,6 +1187,13 @@ exit:
+ 
  }
  
 +rpmRC pgpVerifySignature2(pgpDigParams key, pgpDigParams sig, DIGEST_CTX hashctx, char **lints)
@@ -166,7 +177,7 @@ index 0fcd220e4..a049c09b2 100644
  {
      const char * enc = NULL;
 diff --git a/rpmio/rpmpgp_sequoia.c b/rpmio/rpmpgp_sequoia.c
-index e01acd0e9..2141bbf30 100644
+index c6434270a..d0b673953 100644
 --- a/rpmio/rpmpgp_sequoia.c
 +++ b/rpmio/rpmpgp_sequoia.c
 @@ -36,6 +36,9 @@ W(uint32_t, pgpDigParamsCreationTime, (pgpDigParams digp), (digp))
@@ -191,10 +202,10 @@ index e01acd0e9..2141bbf30 100644
    (const uint8_t *pkts, size_t pktlen,
     pgpDigParams mainkey, pgpDigParams **subkeys,
 diff --git a/tests/rpmi.at b/tests/rpmi.at
-index 7c8f25eff..d67185d5b 100644
+index 9d74cf689..423d97bca 100644
 --- a/tests/rpmi.at
 +++ b/tests/rpmi.at
-@@ -254,7 +254,7 @@ AT_CLEANUP
+@@ -342,7 +342,7 @@ AT_CLEANUP
  
  AT_SETUP([rpm -U <corrupted signed 1>])
  AT_KEYWORDS([install])
@@ -203,7 +214,7 @@ index 7c8f25eff..d67185d5b 100644
  RPMDB_INIT
  
  pkg="hello-2.0-1.x86_64-signed.rpm"
-@@ -267,7 +267,13 @@ runroot rpm -U --ignorearch --ignoreos --nodeps \
+@@ -355,7 +355,13 @@ runroot rpm -U --ignorearch --ignoreos --nodeps \
  ],
  [1],
  [],
@@ -219,10 +230,93 @@ index 7c8f25eff..d67185d5b 100644
  ])
  AT_CLEANUP
 diff --git a/tests/rpmsigdig.at b/tests/rpmsigdig.at
-index 5b1c6c4a6..e5482735a 100644
+index 9fb3febc9..df1f669e4 100644
 --- a/tests/rpmsigdig.at
 +++ b/tests/rpmsigdig.at
-@@ -539,7 +539,7 @@ AT_CLEANUP
+@@ -386,17 +386,17 @@ AT_CHECK([
+ RPMDB_INIT
+ 
+ echo Checking package before importing key:
+-runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
++runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
+ echo Importing key:
+-runroot rpmkeys --quiet --import /data/keys/alice-expired-subkey.asc; echo $?
++runroot rpmkeys --quiet --import /data/keys/alice-expired-subkey.asc 2>&1; echo $?
+ echo Checking for key:
+ runroot rpm -qi gpg-pubkey-eb04e625-* | grep Version | head -n1
+ echo Checking package after importing key:
+-runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
++runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
+ echo Checking package after importing key, no digest:
+-runroot rpmkeys --define '_pkgverify_level all' -Kv --nodigest /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
++runroot rpmkeys --define '_pkgverify_level all' -Kv --nodigest /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
+ echo Checking package after importing key, no signature:
+-runroot rpmkeys --define '_pkgverify_level all' -Kv --nosignature /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
++runroot rpmkeys --define '_pkgverify_level all' -Kv --nosignature /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
+ ],
+ [0],
+ [[Checking package before importing key:
+@@ -416,6 +416,10 @@ Checking for key:
+ Version     : eb04e625
+ Checking package after importing key:
+ /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm:
++error: Verifying a signature using certificate B6542F92F30650C36B6F41BCB3A771BFEB04E625 (Alice <alice@example.org>):
++  Key 1F71177215217EE0 invalid: key is not alive
++      because: The subkey is not live
++      because: Expired on 2022-04-12T00:00:15Z
+     Header V4 RSA/SHA512 Signature, key ID 15217ee0: NOTTRUSTED
+     Header DSA signature: NOTFOUND
+     Header SHA256 digest: OK
+@@ -427,6 +431,10 @@ Checking package after importing key:
+ 1
+ Checking package after importing key, no digest:
+ /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm:
++error: Verifying a signature using certificate B6542F92F30650C36B6F41BCB3A771BFEB04E625 (Alice <alice@example.org>):
++  Key 1F71177215217EE0 invalid: key is not alive
++      because: The subkey is not live
++      because: Expired on 2022-04-12T00:00:15Z
+     Header V4 RSA/SHA512 Signature, key ID 15217ee0: NOTTRUSTED
+     Header DSA signature: NOTFOUND
+     RSA signature: NOTFOUND
+@@ -455,15 +463,15 @@ RPMDB_INIT
+ echo Checking package before importing key:
+ runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
+ echo Importing key:
+-runroot rpmkeys --quiet --import /data/keys/alice-revoked-subkey.asc; echo $?
++runroot rpmkeys --quiet --import /data/keys/alice-revoked-subkey.asc 2>&1; echo $?
+ echo Checking for key:
+ runroot rpm -qi gpg-pubkey-eb04e625-* | grep Version | head -n1
+ echo Checking package after importing key:
+-runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
++runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
+ echo Checking package after importing key, no digest:
+-runroot rpmkeys --define '_pkgverify_level all' -Kv --nodigest /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
++runroot rpmkeys --define '_pkgverify_level all' -Kv --nodigest /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
+ echo Checking package after importing key, no signature:
+-runroot rpmkeys --define '_pkgverify_level all' -Kv --nosignature /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
++runroot rpmkeys --define '_pkgverify_level all' -Kv --nosignature /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
+ ],
+ [0],
+ [[Checking package before importing key:
+@@ -483,6 +491,8 @@ Checking for key:
+ Version     : eb04e625
+ Checking package after importing key:
+ /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm:
++error: Verifying a signature using certificate B6542F92F30650C36B6F41BCB3A771BFEB04E625 (Alice <alice@example.org>):
++  Key 1F71177215217EE0 is invalid: key is revoked
+     Header V4 RSA/SHA512 Signature, key ID 15217ee0: NOTTRUSTED
+     Header DSA signature: NOTFOUND
+     Header SHA256 digest: OK
+@@ -494,6 +504,8 @@ Checking package after importing key:
+ 1
+ Checking package after importing key, no digest:
+ /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm:
++error: Verifying a signature using certificate B6542F92F30650C36B6F41BCB3A771BFEB04E625 (Alice <alice@example.org>):
++  Key 1F71177215217EE0 is invalid: key is revoked
+     Header V4 RSA/SHA512 Signature, key ID 15217ee0: NOTTRUSTED
+     Header DSA signature: NOTFOUND
+     RSA signature: NOTFOUND
+@@ -740,7 +752,7 @@ AT_CLEANUP
  # Test pre-built corrupted package verification (corrupted signature)
  AT_SETUP([rpmkeys -Kv <corrupted signed> 1])
  AT_KEYWORDS([rpmkeys digest signature])
@@ -231,7 +325,7 @@ index 5b1c6c4a6..e5482735a 100644
  RPMDB_INIT
  
  pkg="hello-2.0-1.x86_64-signed.rpm"
-@@ -553,14 +553,28 @@ runroot rpmkeys -Kv /tmp/${pkg}
+@@ -754,14 +766,28 @@ runroot rpmkeys -Kv /tmp/${pkg}
  ],
  [1],
  [/tmp/hello-2.0-1.x86_64-signed.rpm:
@@ -263,5 +357,5 @@ index 5b1c6c4a6..e5482735a 100644
      Header SHA1 digest: OK
      Payload SHA256 digest: OK
 -- 
-2.40.0
+2.40.1
 
