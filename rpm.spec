@@ -179,7 +179,7 @@ Requires: rpm-sequoia%{_isa} >= 1.4.0
 
 # XXX dirty temporary hack to "bootstrap" new .so version
 # XXX isa bits isn't quite right for multilib but suffices for this purpose
-%if %{__isa_bits}bit == 64bit
+%if "%{__isa_bits}bit" == "64bit"
 Provides: librpmio.so.%{oldsover}()(64bit)
 Provides: librpm.so.%{oldsover}()(64bit)
 %else
