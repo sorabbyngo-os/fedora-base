@@ -1,0 +1,27 @@
+From d18d6ce41df4a5887df47a69052a401808aef19f Mon Sep 17 00:00:00 2001
+From: Florian Festi <ffesti@redhat.com>
+Date: Mon, 8 May 2023 17:50:21 +0200
+Subject: [PATCH] Fix bzip2 detection
+
+HAVE_BZLIB_H was not set due to a typo leading to the bz2 support not
+being compiled in although the library was detected correctly.
+---
+ CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9718505bf..4a5332f4b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -272,7 +272,7 @@ id0name(UID_0_USER /etc/passwd)
+ id0name(GID_0_GROUP /etc/group)
+ 
+ # map module/package findings to config.h
+-if (${Bzip2_FOUND})
++if (${BZIP2_FOUND})
+ 	set(HAVE_BZLIB_H 1)
+ endif()
+ if (${LIBLZMA_FOUND})
+-- 
+2.40.1
+
