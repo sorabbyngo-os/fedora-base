@@ -32,7 +32,7 @@
 
 %global rpmver 4.18.90
 #global snapver rc1
-%global baserelease 4
+%global baserelease 5
 %global sover 10
 %global oldsover 9
 
@@ -153,6 +153,7 @@ rpm-4.18.90-weak-user-group.patch
 0001-Add-pgpVerifySignature2-and-pgpPrtParams2.patch
 0001-Fix-bzip2-detection.patch
 0001-Enable-large-file-support-on-32-bit-systems-again.patch
+0001-Use-mkdir-p-for-creating-SPECPARTS-dir.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -648,6 +649,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Wed May 17 2023 Florian Festi <ffesti@redhat.com> - 4.18.90-5
+- Use mkdir -p for creating SPECPARTS dir
+
 * Wed May 17 2023 Florian Festi <ffesti@redhat.com> - 4.18.90-4
 - Enable large file support on 32-bit systems again
 
