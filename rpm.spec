@@ -32,7 +32,7 @@
 
 %global rpmver 4.18.90
 #global snapver rc1
-%global baserelease 7
+%global baserelease 8
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -373,6 +373,7 @@ mkdir _build
 cd _build
 cmake \
       -DCMAKE_INSTALL_PREFIX=%{_usr} \
+      -DCMAKE_INSTALL_SHAREDSTATEDIR:PATH=%{_var}/lib \
       %{?with_bdb_ro:-DENABLE_BDB_RO=ON} \
       %{!?with_ndb:-DENABLE_NDB=OFF} \
       %{!?with_sqlite:-DENABLE_SQLITE=OFF} \
@@ -629,6 +630,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Thu May 25 2023 Florian Festi <ffesti@redhat.com> - 4.18.90-8
+- Set %_sharedstatedir to /var/lib (#2209989)
+
 * Thu May 25 2023 Florian Festi <ffesti@redhat.com> - 4.18.90-7
 - Remove compat links for old so name of the libraries
 - Remove compat forward ports for libdnf
