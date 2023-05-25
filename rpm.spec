@@ -34,7 +34,6 @@
 #global snapver rc1
 %global baserelease 6
 %global sover 10
-%global oldsover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:rpm-%(echo %{rpmver} | cut -d'.' -f1-2).x}
@@ -178,17 +177,6 @@ Requires(meta): %{name} = %{version}-%{release}
 %if %{with sequoia}
 # >= 1.4.0 required for pgpVerifySignature2() and pgpPrtParams2()
 Requires: rpm-sequoia%{_isa} >= 1.4.0
-%endif
-
-
-# XXX dirty temporary hack to "bootstrap" new .so version
-# XXX isa bits isn't quite right for multilib but suffices for this purpose
-%if "%{__isa_bits}bit" == "64bit"
-Provides: librpmio.so.%{oldsover}()(64bit)
-Provides: librpm.so.%{oldsover}()(64bit)
-%else
-Provides: librpmio.so.%{oldsover}
-Provides: librpm.so.%{oldsover}
 %endif
 
 %description libs
@@ -411,10 +399,6 @@ cd _build
 # as it is currently in systemd-rpm-macros
 rm $RPM_BUILD_ROOT%{_rpmconfigdir}/fileattrs/sysusers.attr
 
-# XXX dirty temporary hack to "bootstrap" new .so version
-ln -s librpmio.so.%{sover} $RPM_BUILD_ROOT/%{_libdir}/librpmio.so.%{oldsover}
-ln -s librpm.so.%{sover} $RPM_BUILD_ROOT/%{_libdir}/librpm.so.%{oldsover}
-
 cd ..
 
 mkdir -p $RPM_BUILD_ROOT%{_unitdir}
@@ -546,8 +530,6 @@ fi
 %{_libdir}/librpm.so.%{sover}
 %{_libdir}/librpmio.so.%{sover}.*
 %{_libdir}/librpm.so.%{sover}.*
-%{_libdir}/librpmio.so.%{oldsover}
-%{_libdir}/librpm.so.%{oldsover}
 %if %{with plugins}
 %dir %{_libdir}/rpm-plugins
 
