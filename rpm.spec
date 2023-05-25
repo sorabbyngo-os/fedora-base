@@ -32,7 +32,7 @@
 
 %global rpmver 4.18.90
 #global snapver rc1
-%global baserelease 6
+%global baserelease 7
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -159,9 +159,6 @@ rpm-4.18.90-weak-user-group.patch
 rpm-4.7.1-geode-i686.patch
 # Probably to be upstreamed in slightly different form
 rpm-4.18.x-ldflags.patch
-
-# Needed until dnf catches up
-0001-Forward-port-obsoleted-crypto-needed-by-current-libd.patch
 
 %description
 The RPM Package Manager (RPM) is a powerful command line driven
@@ -632,6 +629,10 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Thu May 25 2023 Florian Festi <ffesti@redhat.com> - 4.18.90-7
+- Remove compat links for old so name of the libraries
+- Remove compat forward ports for libdnf
+
 * Mon May 22 2023 Florian Festi <ffesti@redhat.com> - 4.18.90-6
 - Fix undefined symbols from plugins
 
