@@ -1,0 +1,58 @@
+From 673bd62bd3035575f8fad501f1395b09a0f9f8fe Mon Sep 17 00:00:00 2001
+Message-Id: <673bd62bd3035575f8fad501f1395b09a0f9f8fe.1685346662.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Mon, 29 May 2023 10:34:57 +0300
+Subject: [PATCH] Revert %_smp_build_ncpus change to a parametric macro
+ (RhBug:2210347)
+
+Commit a213101bc3af65c860d045c65fb4e2ef7566a4c6 changed %_smp_build_ncpus
+into a parametric macro, but this breaks common usage via the Lua macros
+table as parametric macros are returned as closures rather than the
+expanded value.
+
+This seems like a design flaw of the macros table, but as an immediate
+remedy for the breakage, add another layer of indirection to revert
+%_smp_build_ncpus back to a non-parametric macro.
+
+Fixes %constrain_build macro in Fedora, which ironically is made obsolete by
+the change that (unintentionally) broke it.
+---
+ macros.in | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/macros.in b/macros.in
+index 5521daba8..4dc6e3ca3 100644
+--- a/macros.in
++++ b/macros.in
+@@ -717,21 +717,23 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
+ # Macro to fix broken permissions in sources
+ %_fixperms      %{__chmod} -Rf a+rX,u+w,g-w,o-w
+ 
+-# Maximum number of CPU's to use when building, 0 for unlimited.
+-#%_smp_ncpus_max 0
+-
+-%_smp_build_ncpus() %([ -z "$RPM_BUILD_NCPUS" ] \\\
++%__smp_use_ncpus() %([ -z "$RPM_BUILD_NCPUS" ] \\\
+ 	&& RPM_BUILD_NCPUS="%{getncpus %{?1}}"; \\\
+         ncpus_max=%{?_smp_ncpus_max}; \\\
+         if [ -n "$ncpus_max" ] && [ "$ncpus_max" -gt 0 ] && [ "$RPM_BUILD_NCPUS" -gt "$ncpus_max" ]; then RPM_BUILD_NCPUS="$ncpus_max"; fi; \\\
+         echo "$RPM_BUILD_NCPUS";)
+ 
++# Maximum number of CPU's to use when building, 0 for unlimited.
++#%_smp_ncpus_max 0
++
++%_smp_build_ncpus %{__smp_use_ncpus:proc}
++
+ %_smp_mflags -j${RPM_BUILD_NCPUS}
+ 
+ # Maximum number of threads to use when building, 0 for unlimited
+ #%_smp_nthreads_max 0
+ 
+-%_smp_build_nthreads %{_smp_build_ncpus:thread}
++%_smp_build_nthreads %{__smp_use_ncpus:thread}
+ 
+ # Assumed task size of processes and threads in megabytes.
+ # Used to limit the amount of parallelism based on available memory.
+-- 
+2.40.1
+
