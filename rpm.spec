@@ -32,7 +32,7 @@
 
 %global rpmver 4.18.91
 #global snapver rc1
-%global baserelease 3
+%global baserelease 4
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -620,6 +620,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon Jun 26 2023 Python Maint <python-maint@redhat.com> - 4.18.91-4
+- Rebuilt for Python 3.12
+
 * Wed Jun 21 2023 Panu Matilainen <pmatilai@redhat.com> - 4.18.91-3
 - Enable user/group provide generation
 - Add a conflict for systemd versions carrying their own
