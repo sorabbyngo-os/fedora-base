@@ -57,7 +57,7 @@ License: GPLv2+
 Requires: coreutils
 Requires: popt%{_isa} >= 1.10.2.1
 Requires: curl
-Conflicts: systemd < 253.5-6.fc39
+Conflicts: systemd < 253.5-6
 Obsoletes: python2-rpm < %{version}-%{release}
 
 %if %{with check}
