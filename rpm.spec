@@ -32,7 +32,7 @@
 
 %global rpmver 4.18.91
 #global snapver rc1
-%global baserelease 2
+%global baserelease 3
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -57,7 +57,7 @@ License: GPLv2+
 Requires: coreutils
 Requires: popt%{_isa} >= 1.10.2.1
 Requires: curl
-Conflicts: systemd < systemd-253.5-5.fc39
+Conflicts: systemd < 253.5-6.fc39
 Obsoletes: python2-rpm < %{version}-%{release}
 
 %if %{with check}
