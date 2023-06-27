@@ -32,7 +32,7 @@
 
 %global rpmver 4.18.91
 #global snapver rc1
-%global baserelease 4
+%global baserelease 5
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -147,7 +147,9 @@ rpm-4.9.90-no-man-dirs.patch
 
 rpm-4.18.90-disable-sysusers.patch
 rpm-4.18.90-weak-user-group.patch
+
 # Patches already upstream:
+0001-Don-t-muck-with-per-process-global-sqlite-configurat.patch
 # ...
 
 # These are not yet upstream
@@ -620,6 +622,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue Jun 27 2023 Panu Matilainen <pmatilai@redhat.com> - 4.18.91-5
+- Fix potential crash with multiple in-process sqlite uses
+
 * Mon Jun 26 2023 Python Maint <python-maint@redhat.com> - 4.18.91-4
 - Rebuilt for Python 3.12
 
