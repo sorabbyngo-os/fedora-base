@@ -1,0 +1,33 @@
+From 7072b2d2b92e4d2731451bdcca8d83ab6b945016 Mon Sep 17 00:00:00 2001
+Message-ID: <7072b2d2b92e4d2731451bdcca8d83ab6b945016.1687934969.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Tue, 20 Jun 2023 10:11:20 +0300
+Subject: [PATCH] Fix per-file plugin hook regression introduced in 4.18
+
+Commit 6dd62720fe84f7e2ad902c915b952fc0b29e3dcd neglected to update
+rpmpluginsCallFsmFilePost() to pass the absolute path in the case
+of unowned directories. Because in that case there's no rpmfi to
+pass to the plugin in that case, there's simply no way for the plugin
+to know what path is being manipulated. Oops.
+
+Fixes: #2543
+---
+ lib/fsm.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/fsm.c b/lib/fsm.c
+index 747ed2b09..c44f6313c 100644
+--- a/lib/fsm.c
++++ b/lib/fsm.c
+@@ -360,7 +360,7 @@ static int fsmDoMkDir(rpmPlugins plugins, int dirfd, const char *dn,
+     }
+ 
+     /* Run fsm file post hook for all plugins */
+-    rpmpluginsCallFsmFilePost(plugins, NULL, dn, mode, op, rc);
++    rpmpluginsCallFsmFilePost(plugins, NULL, apath, mode, op, rc);
+ 
+     if (!rc) {
+ 	rpmlog(RPMLOG_DEBUG,
+-- 
+2.41.0
+
