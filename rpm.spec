@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.1.1
 #global snapver rc1
-%global baserelease 1
+%global baserelease 2
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -372,6 +372,11 @@ cmake \
 
 %make_build
 
+%check
+# We can't run the actual test-suite from %%check,
+# at least check the Python module is importable:
+LD_LIBRARY_PATH=%{buildroot}%{_libdir} %py3_check_import rpm rpm.transaction
+
 %install
 cd _build
 %make_install
@@ -614,6 +619,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon May 06 2024 Miro Hrončok <mhroncok@redhat.com> - 4.19.1.1-2
+- During the build, assert the Python modules are importable
+
 * Wed Feb 07 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-1
 - Update to 4.19.1.1 (https://rpm.org/wiki/Releases/4.19.1.1)
 
