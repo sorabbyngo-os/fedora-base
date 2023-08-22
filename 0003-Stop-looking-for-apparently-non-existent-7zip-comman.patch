@@ -1,0 +1,37 @@
+From 095502dc0933731eb5a8e877e1c383b8c5e7af44 Mon Sep 17 00:00:00 2001
+Message-ID: <095502dc0933731eb5a8e877e1c383b8c5e7af44.1692703597.git.pmatilai@redhat.com>
+In-Reply-To: <bbb289e303d8c72b9e35410e593b8d92b006bec1.1692703597.git.pmatilai@redhat.com>
+References: <bbb289e303d8c72b9e35410e593b8d92b006bec1.1692703597.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 16 Aug 2023 10:18:20 +0300
+Subject: [PATCH 3/3] Stop looking for apparently non-existent 7zip command
+
+Since the initial commit 185596818f763af1249f19161f38134ee93092d2, we've
+primarily looked for a command named "7zip" but defaulted to 7za when
+not found. Looking closer it seems that there never was any command
+called 7zip at all, at least in the OSS landscape. So don't default to
+something that doesn't even exist, which also means we'll land on an
+actually working value if/when 7z[a] doesn't happen to be present at
+build-time (there's no other reason for it to be there).
+
+Related to #2608
+---
+ CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 55c1d2169..e40e889f6 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -88,7 +88,7 @@ function(makemacros)
+ 	set(rundir /run)
+ 	set(root_prefix /usr)
+ 
+-	findutil(__7ZIP "7zip;7za;7z")
++	findutil(__7ZIP "7za;7z")
+ 	findutil(__BZIP2 bzip2)
+ 	findutil(__CAT cat)
+ 	findutil(__CHMOD chmod)
+-- 
+2.41.0
+
