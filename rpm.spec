@@ -589,6 +589,7 @@ fi
 %{_mandir}/man8/rpmsign.8*
 
 %files -n python3-%{name}
+%dir %{python3_sitearch}/rpm
 %{python3_sitearch}/rpm-%{rpmver}*.egg-info
 %{python3_sitearch}/rpm/__init__.py
 %{python3_sitearch}/rpm/transaction.py
@@ -617,6 +618,7 @@ fi
 %changelog
 * Mon Nov 13 2023 Panu Matilainen <pmatilai@redhat.com> - 4.19.0-2
 - Ensure central package ops log via rpm-plugin-audit recommends (#1476926)
+- Own our Python module directory (#2248555)
 
 * Tue Sep 19 2023 Michal Domonkos <mdomonko@redhat.com> - 4.19.0-1
 - Update to 4.19.0
