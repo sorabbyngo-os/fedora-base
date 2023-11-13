@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.0
 #global snapver rc1
-%global baserelease 1
+%global baserelease 2
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -158,6 +158,8 @@ Requires(meta): %{name} = %{version}-%{release}
 %if %{with sequoia}
 # >= 1.4.0 required for pgpVerifySignature2() and pgpPrtParams2()
 Requires: rpm-sequoia%{_isa} >= 1.4.0
+# Most systems should have a central package operations log
+Recommends: rpm-plugin-audit
 %endif
 
 %description libs
@@ -613,6 +615,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon Nov 13 2023 Panu Matilainen <pmatilai@redhat.com> - 4.19.0-2
+- Ensure central package ops log via rpm-plugin-audit recommends (#1476926)
+
 * Tue Sep 19 2023 Michal Domonkos <mdomonko@redhat.com> - 4.19.0-1
 - Update to 4.19.0
 
