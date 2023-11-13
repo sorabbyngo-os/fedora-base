@@ -140,6 +140,7 @@ rpm-4.18.90-weak-user-group.patch
 
 # Patches already upstream:
 # ...
+rpm-4.19.0-sysusers-fixes.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -619,6 +620,7 @@ fi
 * Mon Nov 13 2023 Panu Matilainen <pmatilai@redhat.com> - 4.19.0-2
 - Ensure central package ops log via rpm-plugin-audit recommends (#1476926)
 - Own our Python module directory (#2248555)
+- Fix sysusers.d generator barfing on legit content (#2246236)
 
 * Tue Sep 19 2023 Michal Domonkos <mdomonko@redhat.com> - 4.19.0-1
 - Update to 4.19.0

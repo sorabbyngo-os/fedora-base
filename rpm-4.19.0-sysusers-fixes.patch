@@ -1,0 +1,184 @@
+From fff4b0b2249223fccddcce9eea8658ddd12f30a0 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 3 Nov 2023 11:34:54 +0200
+Subject: [PATCH 1/4] Use macro error reporting for %add_sysuser errors
+
+Lua has error() but no warning() (obviously) which we'll want in the next
+step, so for consistency lets just use macro.error() instead.
+---
+ macros.in | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/macros.in b/macros.in
+index a047d1e388..1f6d8b252f 100644
+--- a/macros.in
++++ b/macros.in
+@@ -1325,14 +1325,14 @@ end
+         prefix = 'Provides: '
+     end
+     if #arg < 2 then
+-        error('not enough arguments')
++        macros.error({'not enough arguments'})
+     end
+     if arg[1] == 'g' then
+         type = 'group'
+     elseif arg[1] == 'u' then
+         type = 'user'
+     else
+-        error('invalid sysuser type: '..arg[1])
++        macros.error({'invalid sysuser type: '..arg[1]})
+     end
+     name = arg[2]
+     line = table.concat(arg, ' ')
+
+From 8e392aef642fba1f63b6d86b11fad85d63d94ba1 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 3 Nov 2023 11:51:11 +0200
+Subject: [PATCH 2/4] Fix an apparent thinko/typo in the sysusers test spec
+
+I'm quite sure I didn't really intend to test duplicate files behavior
+here...
+---
+ tests/data/SPECS/klang.spec | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tests/data/SPECS/klang.spec b/tests/data/SPECS/klang.spec
+index 7e917fdc7f..e6cce1add8 100644
+--- a/tests/data/SPECS/klang.spec
++++ b/tests/data/SPECS/klang.spec
+@@ -28,6 +28,7 @@ Summary: %{SUMMARY} server
+ 
+ %install
+ mkdir -p ${RPM_BUILD_ROOT}/var/lib/klangd
++mkdir -p ${RPM_BUILD_ROOT}/var/lib/plongd
+ mkdir -p ${RPM_BUILD_ROOT}/usr/bin/
+ mkdir -p ${RPM_BUILD_ROOT}/etc
+ mkdir -p ${RPM_BUILD_ROOT}/%{_sysusersdir}
+@@ -59,5 +60,5 @@ EOF
+ %{_sysusersdir}/klangd.conf
+ %{_sysusersdir}/plong.conf
+ %attr(-,klangd,klangd) /var/lib/klangd
+-%attr(-,plong,klong) /var/lib/klangd
++%attr(-,plong,klong) /var/lib/plongd
+ /usr/bin/klangd
+
+From 59a212dbe3cb19331582c9c022105ae47b9ace21 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 3 Nov 2023 11:53:11 +0200
+Subject: [PATCH 3/4] Handle unsupported 'r' and 'm' sysusers types more
+ gracefully
+
+People will want to use existing sysusers.d files through rpm and while
+we don't support 'r' and 'm' at this time, we shouldn't really call
+them "invalid" and error out. Issue a warning instead, and ignore.
+
+This is the first half of
+https://bugzilla.redhat.com/show_bug.cgi?id=2246236
+---
+ macros.in                   | 3 +++
+ tests/data/SPECS/klang.spec | 2 ++
+ tests/rpmi.at               | 7 +++++++
+ 3 files changed, 12 insertions(+)
+
+diff --git a/macros.in b/macros.in
+index 1f6d8b252f..fefb351ac3 100644
+--- a/macros.in
++++ b/macros.in
+@@ -1331,6 +1331,9 @@ end
+         type = 'group'
+     elseif arg[1] == 'u' then
+         type = 'user'
++    elseif arg[1] == 'r' or arg[1] == 'm' then
++        macros.warn({'ignoring unsupported sysuser type: '..arg[1]})
++        return
+     else
+         macros.error({'invalid sysuser type: '..arg[1]})
+     end
+diff --git a/tests/data/SPECS/klang.spec b/tests/data/SPECS/klang.spec
+index e6cce1add8..e7c03cd7f8 100644
+--- a/tests/data/SPECS/klang.spec
++++ b/tests/data/SPECS/klang.spec
+@@ -47,6 +47,8 @@ EOF
+ cat << EOF > ${RPM_BUILD_ROOT}/%{_sysusersdir}/plong.conf
+ u plong - "Plong fu" /var/lib/plong /sbin/nologin
+ g klong -
++m ding dong
++r - 123-321
+ EOF
+ 
+ %files common
+diff --git a/tests/rpmi.at b/tests/rpmi.at
+index 6339a70a7c..94d8967b12 100644
+--- a/tests/rpmi.at
++++ b/tests/rpmi.at
+@@ -1481,7 +1481,14 @@ AT_SETUP([rpm -i sysusers])
+ AT_KEYWORDS([install build sysusers])
+ RPMDB_INIT
+ 
++RPMTEST_CHECK([
+ runroot rpmbuild -bb --quiet /data/SPECS/klang.spec
++],
++[0],
++[],
++[warning: ignoring unsupported sysuser type: m
++warning: ignoring unsupported sysuser type: r
++])
+ 
+ RPMTEST_CHECK([
+ runroot rpm -U /build/RPMS/noarch/klang-client-1.0-1.noarch.rpm
+
+From c47f71a72e7f885615c677e88ce92810ed1f00c8 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 3 Nov 2023 12:15:58 +0200
+Subject: [PATCH 4/4] Fix comment line handling in sysusers.d(8) files
+
+sysusers.d(8) format permits empty lines and commits, and so must we.
+Add some extra fluff to the test-case for this.
+
+This is the second half of
+https://bugzilla.redhat.com/show_bug.cgi?id=2246236
+
+Fixes: #2741
+---
+ fileattrs/sysusers.attr     | 4 ++++
+ tests/data/SPECS/klang.spec | 5 +++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/fileattrs/sysusers.attr b/fileattrs/sysusers.attr
+index f7a3e838d1..48d4caede9 100644
+--- a/fileattrs/sysusers.attr
++++ b/fileattrs/sysusers.attr
+@@ -6,6 +6,9 @@
+ # For groups created as a side-effect, only provide the group.
+ %__sysusers_provides() %{lua:
+     for line in io.lines(macros["1"]) do
++        if line:sub(1, 1) == '#' then
++            goto continue
++        end
+         fields = {}
+         for w in line:gmatch("%S+") do
+             table.insert(fields, w)
+@@ -14,5 +17,6 @@
+             table.insert(fields, 1, '-b')
+             print(macros.add_sysuser(fields))
+         end
++        ::continue::
+     end
+ }
+diff --git a/tests/data/SPECS/klang.spec b/tests/data/SPECS/klang.spec
+index e7c03cd7f8..64bd90c104 100644
+--- a/tests/data/SPECS/klang.spec
++++ b/tests/data/SPECS/klang.spec
+@@ -45,7 +45,12 @@ cat << EOF > ${RPM_BUILD_ROOT}/%{_sysusersdir}/klangd.conf
+ u klangd - "Klang server" /var/lib/klangd /sbin/nologin
+ EOF
+ cat << EOF > ${RPM_BUILD_ROOT}/%{_sysusersdir}/plong.conf
++
++# Real life files have all sorts of anomalies
+ u plong - "Plong fu" /var/lib/plong /sbin/nologin
++#...such as empty lines
++
++# and comments comments
+ g klong -
+ m ding dong
+ r - 123-321
