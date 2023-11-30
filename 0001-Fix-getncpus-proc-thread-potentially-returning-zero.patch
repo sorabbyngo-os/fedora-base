@@ -1,0 +1,31 @@
+From 026e7f75e549280d43cdb4c8a1b2faa6e9db0fa3 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 15 Nov 2023 09:24:28 +0200
+Subject: [PATCH 1/2] Fix %{getncpus proc/thread} potentially returning zero
+
+Add the missing sanity check/fixup for memory starved systems where
+we end up returning zero cpus. Should've been in commit
+deaebd0c89a6d453bb971fd8f5a3b858e7a95733 originally.
+
+Reported in https://issues.redhat.com/browse/RHEL-16557
+---
+ rpmio/macro.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/rpmio/macro.c b/rpmio/macro.c
+index 1cccaa98a88c56ed27701f820be01c3f8e7615d1..98067442555f7c458ea4976d96b5438db01bd031 100644
+--- a/rpmio/macro.c
++++ b/rpmio/macro.c
+@@ -1255,6 +1255,9 @@ static void doGetncpus(MacroBuf mb, rpmMacroEntry me, ARGV_t argv, size_t *parse
+ 	if (mcpus < ncpus)
+ 	    ncpus = mcpus;
+     }
++    /* Ensure at least one CPU, no matter how starved */
++    if (ncpus < 1)
++	ncpus = 1;
+ 
+     sprintf(buf, "%u", ncpus);
+     mbAppendStr(mb, buf);
+-- 
+2.43.0
+
