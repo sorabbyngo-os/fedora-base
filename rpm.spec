@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.92
 #global snapver rc1
-%global baserelease 2
+%global baserelease 3
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -137,8 +137,10 @@ rpm-4.17.x-rpm_dbpath.patch
 rpm-4.18.x-siteconfig.patch
 # In current Fedora, man-pages pkg owns all the localized man directories
 rpm-4.9.90-no-man-dirs.patch
-# Disable new user/group handling
+# Make %%_sbindir and %%_bindir the same
+rpm-4.19.1-unify-bindir-sbindir.patch
 
+# Disable new user/group handling
 rpm-4.18.92-disable-sysusers.patch
 rpm-4.19.91-weak-user-group.patch
 
@@ -650,6 +652,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue Jul  9 2024 Zbigniew Jędrzejewski-Szmek <zbyszek@in.waw.pl> - 4.19.92-3
+- Apply patch to set %%_sbindir the same as %%_bindir
+
 * Thu Jul 04 2024 Peter Robinson <pbrobinson@fedoraproject.org> - 4.19.92-2
 - Rebuild for ima-evm-utils 1.6
 
