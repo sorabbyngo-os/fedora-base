@@ -433,6 +433,15 @@ if [ -d /var/lib/rpm ]; then
     done
 fi
 
+%post
+%systemd_post rpmdb-rebuild.service
+
+%preun
+%systemd_preun rpmdb-rebuild.service
+
+%postun
+%systemd_postun rpmdb-rebuild.service
+
 %files -f _build/rpm.lang
 %license COPYING
 %doc CREDITS docs/manual/[a-z]*
