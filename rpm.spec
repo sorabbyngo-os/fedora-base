@@ -25,9 +25,9 @@
 
 %define rpmhome /usr/lib/rpm
 
-%global rpmver 4.19.1.1
+%global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 2
+%global baserelease 1
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -50,6 +50,11 @@ Requires: coreutils
 Requires: popt%{_isa} >= 1.10.2.1
 Requires: curl
 Conflicts: systemd < 253.5-6
+# The old %%install hack for debuginfo enablement in redhat-rpm-config is no
+# longer needed and is now unsupported, causing rpmbuild failures.  Reflect
+# that here.  More details:
+# https://github.com/rpm-software-management/rpm/issues/2204
+Conflicts: redhat-rpm-config < 290-1
 Obsoletes: python2-rpm < %{version}-%{release}
 
 # XXX generally assumed to be installed but make it explicit as rpm
@@ -133,10 +138,10 @@ rpm-4.9.90-no-man-dirs.patch
 # Disable new user/group handling
 
 rpm-4.18.92-disable-sysusers.patch
-rpm-4.18.90-weak-user-group.patch
+rpm-4.19.91-weak-user-group.patch
 
 # Patches already upstream:
-# ...
+0001-Ensure-noarch-packages-don-t-get-debuginfo.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -268,6 +273,13 @@ Requires: rpm-libs%{_isa} = %{version}-%{release}
 Requires(meta): selinux-policy-base
 
 %description plugin-selinux
+%{summary}.
+
+%package plugin-unshare
+Summary: Rpm plugin for Linux namespace isolation functionality
+Requires: rpm-libs%{_isa} = %{version}-%{release}
+
+%description plugin-unshare
 %{summary}.
 
 %package plugin-syslog
@@ -423,9 +435,6 @@ rm -f $RPM_BUILD_ROOT/%{rpmhome}/{perldeps.pl,perl.*,pythond*}
 rm -f $RPM_BUILD_ROOT/%{_fileattrsdir}/{perl*,python*}
 rm -rf $RPM_BUILD_ROOT/var/tmp
 
-# workaround for https://github.com/rpm-software-management/rpm/issues/2811
-rm $RPM_BUILD_ROOT/%{_defaultdocdir}/rpm/README.md
-
 %pre
 # Symlink all rpmdb files to the new location if we're still using /var/lib/rpm
 if [ -d /var/lib/rpm ]; then
@@ -488,6 +497,7 @@ fi
 
 %attr(0755, root, root) %dir %{rpmhome}
 %{rpmhome}/macros
+%exclude %{rpmhome}/macros.d/macros.transaction*
 %{rpmhome}/macros.d
 %{rpmhome}/lua
 %{rpmhome}/rpmpopt*
@@ -514,46 +524,60 @@ fi
 %dir %{_libdir}/rpm-plugins
 
 %files plugin-syslog
+%{rpmhome}/macros.d/macros.transaction_syslog
 %{_libdir}/rpm-plugins/syslog.so
 %{_mandir}/man8/rpm-plugin-syslog.8*
 
 %files plugin-selinux
+%{rpmhome}/macros.d/macros.transaction_selinux
 %{_libdir}/rpm-plugins/selinux.so
 %{_mandir}/man8/rpm-plugin-selinux.8*
 
 %files plugin-systemd-inhibit
+%{rpmhome}/macros.d/macros.transaction_systemd_inhibit
 %{_libdir}/rpm-plugins/systemd_inhibit.so
 %{_mandir}/man8/rpm-plugin-systemd-inhibit.8*
 
 %if %{with libimaevm}
 %files plugin-ima
+%{rpmhome}/macros.d/macros.transaction_ima
 %{_libdir}/rpm-plugins/ima.so
 %{_mandir}/man8/rpm-plugin-ima.8*
 %endif
 
 %if %{with fsverity}
+%{rpmhome}/macros.d/macros.transaction_fsverity
 %files plugin-fsverity
 %{_libdir}/rpm-plugins/fsverity.so
 %endif
 
 %files plugin-fapolicyd
+%{rpmhome}/macros.d/macros.transaction_fapolicyd
 %{_libdir}/rpm-plugins/fapolicyd.so
 %{_mandir}/man8/rpm-plugin-fapolicyd.8*
 
 %files plugin-prioreset
+%{rpmhome}/macros.d/macros.transaction_prioreset
 %{_libdir}/rpm-plugins/prioreset.so
 %{_mandir}/man8/rpm-plugin-prioreset.8*
 
 %files plugin-audit
+%{rpmhome}/macros.d/macros.transaction_audit
 %{_libdir}/rpm-plugins/audit.so
 %{_mandir}/man8/rpm-plugin-audit.8*
 # with plugins
 
 %files plugin-dbus-announce
+%{rpmhome}/macros.d/macros.transaction_dbus_announce
 %{_libdir}/rpm-plugins/dbus_announce.so
 %{_mandir}/man8/rpm-plugin-dbus-announce.8*
 %{_datadir}/dbus-1/system.d/org.rpm.conf
 %endif
+
+%files plugin-unshare
+%{rpmhome}/macros.d/macros.transaction_unshare
+%{_libdir}/rpm-plugins/unshare.so
+%{_mandir}/man8/rpm-plugin-unshare.8*
 
 %files build-libs
 %{_libdir}/librpmbuild.so.%{sover}
@@ -586,6 +610,7 @@ fi
 %{rpmhome}/fileattrs/*
 %{rpmhome}/find-debuginfo.sh
 %{rpmhome}/rpmuncompress
+%{rpmhome}/rpmdump
 
 %files sign
 %{_bindir}/rpmsign
@@ -619,6 +644,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue May 21 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-1
+- Update to 4.20 alpha2 (https://rpm.org/wiki/Releases/4.20.0)
+
 * Mon May 06 2024 Miro Hrončok <mhroncok@redhat.com> - 4.19.1.1-2
 - During the build, assert the Python modules are importable
 
