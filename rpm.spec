@@ -54,7 +54,7 @@ Conflicts: systemd < 253.5-6
 # longer needed and is now unsupported, causing rpmbuild failures.  Reflect
 # that here.  More details:
 # https://github.com/rpm-software-management/rpm/issues/2204
-Conflicts: redhat-rpm-config < 290-1
+Conflicts: redhat-rpm-config < 291-1
 Obsoletes: python2-rpm < %{version}-%{release}
 
 # XXX generally assumed to be installed but make it explicit as rpm
