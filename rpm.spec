@@ -142,6 +142,11 @@ rpm-4.9.90-no-man-dirs.patch
 rpm-4.18.92-disable-sysusers.patch
 rpm-4.19.91-weak-user-group.patch
 
+# Temporarily disable the deprecation warning for
+# %%clamp_mtime_to_source_date_epoch, details here:
+# https://src.fedoraproject.org/rpms/redhat-rpm-config/pull-request/298
+0001-Revert-Add-a-deprecation-warning-for-clamp_mtime_to_.patch
+
 # Patches already upstream:
 0001-Ensure-noarch-packages-don-t-get-debuginfo.patch
 0001-Fix-noprep-regression-from-introducing-mkbuilddir.patch
