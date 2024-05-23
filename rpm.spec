@@ -50,11 +50,13 @@ Requires: coreutils
 Requires: popt%{_isa} >= 1.10.2.1
 Requires: curl
 Conflicts: systemd < 253.5-6
-# The old %%install hack for debuginfo enablement in redhat-rpm-config is no
-# longer needed and is now unsupported, causing rpmbuild failures.  Reflect
-# that here.  More details:
-# https://github.com/rpm-software-management/rpm/issues/2204
+
+# RPM used to require an %%install hack (shipped by redhat-rpm-config) in order
+# to enable debuginfo.  Version 4.19.91 implements this functionality properly
+# so this hack is no longer necessary and, in fact, is no longer supported.
+# More details: https://github.com/rpm-software-management/rpm/issues/2204
 Conflicts: redhat-rpm-config < 291-1
+
 Obsoletes: python2-rpm < %{version}-%{release}
 
 # XXX generally assumed to be installed but make it explicit as rpm
@@ -142,6 +144,9 @@ rpm-4.19.91-weak-user-group.patch
 
 # Patches already upstream:
 0001-Ensure-noarch-packages-don-t-get-debuginfo.patch
+0001-Fix-noprep-regression-from-introducing-mkbuilddir.patch
+0002-Drop-an-accidentally-added-duplicated-test.patch
+0003-Make-build-in-place-much-less-of-a-hack-and-also-wor.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -644,7 +649,7 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
-* Tue May 21 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-1
+* Thu May 23 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-1
 - Update to 4.20 alpha2 (https://rpm.org/wiki/Releases/4.20.0)
 
 * Mon May 06 2024 Miro Hrončok <mhroncok@redhat.com> - 4.19.1.1-2

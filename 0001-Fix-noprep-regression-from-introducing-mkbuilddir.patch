@@ -1,0 +1,71 @@
+From c74ab58f081937eefd0f79af8d0310495d321864 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Thu, 23 May 2024 07:36:05 +0300
+Subject: [PATCH 1/3] Fix --noprep regression from introducing %mkbuilddir
+
+Commit 9d35c8df497534e1fbd806a4dc78802bcf35d7cb added a new step
+into the build process but I literally wasn't even aware we have a
+--noprep switch in rpmbuild, much less that it's used. Quite widely
+even, by mock.
+
+Luckily this seems simple to fix, just skip %mkbuilddir in --noprep.
+Extend the dynamic buildrequires test to mimick what mock does.
+
+Fixes: #3121
+---
+ tests/rpmbuild.at | 18 ++++++++++++++++++
+ tools/rpmbuild.c  |  2 +-
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/tests/rpmbuild.at b/tests/rpmbuild.at
+index 8a06d8a84..a060abe1f 100644
+--- a/tests/rpmbuild.at
++++ b/tests/rpmbuild.at
+@@ -2259,6 +2259,8 @@ RPMTEST_CLEANUP
+ 
+ # ------------------------------
+ # Check dynamic build requires
++# Mimick what mock does: repeat build with --noprep --noclean
++# until -br succeeds, and finally build the package.
+ AT_SETUP([rpmbuild -br])
+ AT_KEYWORDS([build])
+ RPMTEST_CHECK([
+@@ -2275,6 +2277,22 @@ runroot rpmbuild \
+ 	foo-bar = 2.0 is needed by buildrequires-1.0-1.noarch
+ ],
+ )
++
++RPMTEST_CHECK([
++runroot rpmbuild \
++    --define "provs bar foo foo-bar" \
++    --define "pkg foo" \
++    -bb --quiet /data/SPECS/deptest.spec
++
++runroot rpm -U /build/RPMS/noarch/deptest-foo-1.0-1.noarch.rpm
++
++runroot rpmbuild \
++    -br --noprep --noclean\
++    --quiet /data/SPECS/buildrequires.spec
++],
++[0],
++[],
++[])
+ RPMTEST_CLEANUP
+ 
+ # Test that -br creates an src.rpm on success
+diff --git a/tools/rpmbuild.c b/tools/rpmbuild.c
+index 492b0c290..459427fe3 100644
+--- a/tools/rpmbuild.c
++++ b/tools/rpmbuild.c
+@@ -261,7 +261,7 @@ static struct poptOption rpmBuildPoptTable[] = {
+ 
+  { "noclean", '\0', POPT_BIT_SET, &nobuildAmount, RPMBUILD_CLEAN|RPMBUILD_RMBUILD,
+ 	N_("do not execute %clean stage of the build"), NULL },
+- { "noprep", '\0', POPT_BIT_SET, &nobuildAmount, RPMBUILD_PREP,
++ { "noprep", '\0', POPT_BIT_SET, &nobuildAmount, RPMBUILD_PREP|RPMBUILD_MKBUILDDIR,
+ 	N_("do not execute %prep stage of the build"), NULL },
+  { "nocheck", '\0', POPT_BIT_SET, &nobuildAmount, RPMBUILD_CHECK,
+ 	N_("do not execute %check stage of the build"), NULL },
+-- 
+2.45.1
+
