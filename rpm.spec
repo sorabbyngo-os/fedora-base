@@ -152,6 +152,7 @@ rpm-4.19.91-weak-user-group.patch
 0001-Fix-noprep-regression-from-introducing-mkbuilddir.patch
 0002-Drop-an-accidentally-added-duplicated-test.patch
 0003-Make-build-in-place-much-less-of-a-hack-and-also-wor.patch
+0001-Fix-incomplete-header-on-plain-src.rpm-build-modes-r.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
