@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 1
+%global baserelease 2
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -655,6 +655,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon May 27 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-2
+- Fix incomplete header on plain src.rpm build modes regression
+
 * Thu May 23 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-1
 - Update to 4.20 alpha2 (https://rpm.org/wiki/Releases/4.20.0)
 
