@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 3
+%global baserelease 4
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -154,6 +154,7 @@ rpm-4.19.91-weak-user-group.patch
 0003-Make-build-in-place-much-less-of-a-hack-and-also-wor.patch
 0001-Fix-incomplete-header-on-plain-src.rpm-build-modes-r.patch
 0001-Hammer-in-no-debuginfo-for-noarch-packages-damn-it-r.patch
+0001-Fix-regression-on-subpackage-debuginfo-RPMTAG_SOURCE.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -656,6 +657,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Wed May 29 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-4
+- Fix regression on subpackage debuginfo RPMTAG_SOURCERPM missing
+
 * Tue May 28 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-3
 - Fix debuginfo enabled for noarch when --target is used regression
 
