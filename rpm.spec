@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 5
+%global baserelease 6
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -658,8 +658,11 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Fri May 31 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-6
+- Fix unescaped changelog macro in previous build, oops
+
 * Fri May 31 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-5
-- Fix RPM_BUILD_ROOT regression on a %__spec_install_pre override (#2284036)
+- Fix RPM_BUILD_ROOT regression on a %%__spec_install_pre override (#2284036)
 
 * Wed May 29 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-4
 - Fix regression on subpackage debuginfo RPMTAG_SOURCERPM missing
