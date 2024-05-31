@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 4
+%global baserelease 5
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -155,6 +155,7 @@ rpm-4.19.91-weak-user-group.patch
 0001-Fix-incomplete-header-on-plain-src.rpm-build-modes-r.patch
 0001-Hammer-in-no-debuginfo-for-noarch-packages-damn-it-r.patch
 0001-Fix-regression-on-subpackage-debuginfo-RPMTAG_SOURCE.patch
+0001-Fix-a-buildroot-regression-on-an-early-__spec_instal.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -657,6 +658,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Fri May 31 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-5
+- Fix RPM_BUILD_ROOT regression on a %__spec_install_pre override (#2284036)
+
 * Wed May 29 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.91-4
 - Fix regression on subpackage debuginfo RPMTAG_SOURCERPM missing
 
