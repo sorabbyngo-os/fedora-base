@@ -1,0 +1,237 @@
+From 996b3ac32d244094c1d3a875d7098d459bb36c71 Mon Sep 17 00:00:00 2001
+Message-ID: <996b3ac32d244094c1d3a875d7098d459bb36c71.1717480260.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Mon, 3 Jun 2024 11:59:29 +0300
+Subject: [PATCH 1/3] Minimally bring back --buildroot cli switch for cpack
+
+Turns out cmake's cpack rpm module is using --buildroot to preinstall
+content to a known location and then point a dummy rpmbuild spec to
+that location using --buildroot.
+
+This is not how rpmbuild wants to be used but we can't very well break cpack
+(and who knows what else may be using it) just like that, commit
+9d35c8df497534e1fbd806a4dc78802bcf35d7cb went a step too far with the
+buildroot elimination.
+
+Do a partial revert of 9d35c8df497534e1fbd806a4dc78802bcf35d7cb to
+honor buildRoot argument to rpmSpecParse() again and bring back
+--buildroot cli switch to set it, just enough to cover this usage. Also
+add a test-case to mimick the "install from the outside" use that cpack does.
+---
+ build/parsePreamble.c        | 20 ++++++++++++++++----
+ build/parseSpec.c            | 12 +++++++-----
+ docs/man/rpmbuild.8.md       |  7 ++++---
+ include/rpm/rpmbuild.h       |  2 +-
+ tests/data/SPECS/brtest.spec | 11 +++++++++++
+ tests/rpmbuild.at            | 25 +++++++++++++++++++++++++
+ tools/rpmbuild.c             | 10 ++++++++++
+ 7 files changed, 74 insertions(+), 13 deletions(-)
+ create mode 100644 tests/data/SPECS/brtest.spec
+
+diff --git a/build/parsePreamble.c b/build/parsePreamble.c
+index cae2cea07..f62004ba0 100644
+--- a/build/parsePreamble.c
++++ b/build/parsePreamble.c
+@@ -1304,15 +1304,27 @@ int parsePreamble(rpmSpec spec, int initialPackage, enum parseStages stage)
+ 	    rpmPushMacroFlags(spec->macros, "builddir", NULL, spec->buildDir,
+ 				RMIL_SPEC, RPMMACRO_LITERAL);
+ 
+-	    spec->buildRoot = rpmGetPath(spec->buildDir, "/BUILDROOT", NULL);
+-	    rpmPushMacroFlags(spec->macros, "buildroot", NULL, spec->buildRoot,
+-				RMIL_SPEC, RPMMACRO_LITERAL);
+-
+ 	    char *specparts = rpmGetPath(spec->buildDir, "/SPECPARTS", NULL);
+ 	    rpmPushMacroFlags(spec->macros, "specpartsdir", NULL, specparts,
+ 				RMIL_SPEC, RPMMACRO_LITERAL);
+ 	    free(specparts);
+ 	}
++
++	if (!spec->buildRoot) {
++	    spec->buildRoot = rpmGetPath(spec->buildDir, "/BUILDROOT", NULL);
++	} else {
++	    char *buildRoot = rpmGetPath(spec->buildRoot, NULL);
++	    free(spec->buildRoot);
++	    spec->buildRoot = buildRoot;
++	}
++
++	if (rstreq(spec->buildRoot, "") || rstreq(spec->buildRoot, "/")) {
++	    rpmlog(RPMLOG_ERR, _("Invalid buildroot: '%s'\n"), spec->buildRoot);
++	    goto exit;
++	}
++
++	rpmPushMacroFlags(spec->macros, "buildroot", NULL, spec->buildRoot,
++			    RMIL_SPEC, RPMMACRO_LITERAL);
+     }
+ 
+     /* if we get down here nextPart has been set to non-error */
+diff --git a/build/parseSpec.c b/build/parseSpec.c
+index 620da0fa5..440cb0b1b 100644
+--- a/build/parseSpec.c
++++ b/build/parseSpec.c
+@@ -1068,7 +1068,7 @@ static rpmRC applyAppendPrepend(rpmSpec spec)
+ }
+ 
+ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
+-			 int recursing);
++			 const char *buildRoot, int recursing);
+ 
+ /* is part allowed at this stage */
+ static int checkPart(int parsePart, enum parseStages stage) {
+@@ -1216,7 +1216,7 @@ static rpmRC parseSpecSection(rpmSpec *specptr, enum parseStages stage)
+ 		if (!rpmMachineScore(RPM_MACHTABLE_BUILDARCH, spec->BANames[x]))
+ 		    continue;
+ 		rpmPushMacro(NULL, "_target_cpu", NULL, spec->BANames[x], RMIL_RPMRC);
+-		spec->BASpecs[index] = parseSpec(spec->specFile, spec->flags, 1);
++		spec->BASpecs[index] = parseSpec(spec->specFile, spec->flags, spec->buildRoot, 1);
+ 		if (spec->BASpecs[index] == NULL) {
+ 			spec->BACount = index;
+ 			goto errxit;
+@@ -1286,7 +1286,7 @@ errxit:
+ 
+ 
+ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
+-			 int recursing)
++			 const char *buildRoot, int recursing)
+ {
+     rpmSpec spec;
+ 
+@@ -1295,7 +1295,9 @@ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
+ 
+     spec->specFile = rpmGetPath(specFile, NULL);
+     pushOFI(spec, spec->specFile);
+-
++    /* If explicit --buildroot was passed, grab hold of it */
++    if (buildRoot)
++	spec->buildRoot = xstrdup(buildRoot);
+     rpmPushMacro(NULL, "_docdir", NULL, "%{_defaultdocdir}", RMIL_SPEC);
+     rpmPushMacro(NULL, "_licensedir", NULL, "%{_defaultlicensedir}", RMIL_SPEC);
+     spec->recursing = recursing;
+@@ -1378,7 +1380,7 @@ static rpmRC finalizeSpec(rpmSpec spec)
+ rpmSpec rpmSpecParse(const char *specFile, rpmSpecFlags flags,
+ 		     const char *buildRoot)
+ {
+-    rpmSpec spec = parseSpec(specFile, flags, 0);
++    rpmSpec spec = parseSpec(specFile, flags, buildRoot, 0);
+     if (spec && !(flags & RPMSPEC_NOFINALIZE)) {
+ 	finalizeSpec(spec);
+     }
+diff --git a/docs/man/rpmbuild.8.md b/docs/man/rpmbuild.8.md
+index 8c06a7712..bfd202751 100644
+--- a/docs/man/rpmbuild.8.md
++++ b/docs/man/rpmbuild.8.md
+@@ -211,10 +211,11 @@ all the stages preceding it), and is one of:
+ 
+ The following options may also be used:
+ 
+-**\--buildroot ***DIRECTORY*
++**\--buildroot ***DIRECTORY* (DEPRECATED)
+ 
+-:   When building a package, override the BuildRoot tag with directory
+-    *DIRECTORY*.
++:   When building a package, override rpm's buildroot to *DIRECTORY*.
++    This option is deprecated and will be removed in the future, do
++    not introduce new usages.
+ 
+ **\--clean**
+ 
+diff --git a/include/rpm/rpmbuild.h b/include/rpm/rpmbuild.h
+index 8baafdf45..23f037d6e 100644
+--- a/include/rpm/rpmbuild.h
++++ b/include/rpm/rpmbuild.h
+@@ -78,7 +78,7 @@ typedef	struct rpmBuildArguments_s *	BTA_t;
+  *
+  * @param specFile	path to spec file
+  * @param flags		flags to control operation
+- * @param buildRoot	unused
++ * @param buildRoot	buildRoot override or NULL for default
+  * @return		new spec control structure
+  */
+ rpmSpec rpmSpecParse(const char *specFile, rpmSpecFlags flags,
+diff --git a/tests/data/SPECS/brtest.spec b/tests/data/SPECS/brtest.spec
+new file mode 100644
+index 000000000..cde4d80e0
+--- /dev/null
++++ b/tests/data/SPECS/brtest.spec
+@@ -0,0 +1,11 @@
++Summary:          Testing buildroot behavior
++Name:             brtest
++Version:          1.0
++Release:          1
++License:          GPL
++BuildArch:	noarch
++
++%description
++
++%files
++/out/sider
+diff --git a/tests/rpmbuild.at b/tests/rpmbuild.at
+index a77ceeca4..19998012d 100644
+--- a/tests/rpmbuild.at
++++ b/tests/rpmbuild.at
+@@ -3289,3 +3289,28 @@ runroot rpmbuild -bb /data/SPECS/install-hack.spec
+ [ignore])
+ RPMTEST_CLEANUP
+ 
++# Mimick what cpack does. It's not how rpmbuild wants to be used, so
++# please don't copy this to any new usages.
++AT_SETUP([rpmbuild --buildroot])
++AT_KEYWORDS([build])
++
++RPMDB_INIT
++RPMTEST_CHECK([
++runroot_other mkdir -p /tmp/buildroot/out
++runroot_other touch /tmp/buildroot/out/sider
++runroot rpmbuild -bb --quiet \
++	--buildroot /tmp/buildroot \
++	/data/SPECS/brtest.spec
++],
++[0],
++[],
++[])
++
++RPMTEST_CHECK([
++runroot rpm -qpl /build/RPMS/noarch/brtest-1.0-1.noarch.rpm
++],
++[0],
++[/out/sider
++],
++[])
++RPMTEST_CLEANUP
+diff --git a/tools/rpmbuild.c b/tools/rpmbuild.c
+index 6e6d2cfe4..3e736444c 100644
+--- a/tools/rpmbuild.c
++++ b/tools/rpmbuild.c
+@@ -21,6 +21,7 @@ static struct rpmBuildArguments_s rpmBTArgs;
+ #define	POPT_NOLANG		-1012
+ #define	POPT_RMSOURCE		-1013
+ #define	POPT_RMBUILD		-1014
++#define	POPT_BUILDROOT		-1015
+ #define	POPT_TARGETPLATFORM	-1016
+ #define	POPT_NOBUILD		-1017
+ #define	POPT_RMSPEC		-1019
+@@ -127,6 +128,13 @@ static void buildArgCallback( poptContext con,
+     case POPT_RMSOURCE: rba->buildAmount |= RPMBUILD_RMSOURCE; break;
+     case POPT_RMSPEC: rba->buildAmount |= RPMBUILD_RMSPEC; break;
+     case POPT_RMBUILD: rba->buildAmount |= RPMBUILD_RMBUILD; break;
++    case POPT_BUILDROOT:
++	if (rba->buildRootOverride) {
++	    rpmlog(RPMLOG_ERR, _("buildroot already specified, ignoring %s\n"), arg);
++	    break;
++	}
++	rba->buildRootOverride = xstrdup(arg);
++	break;
+     case POPT_TARGETPLATFORM:
+ 	argvSplit(&build_targets, arg, ",");
+ 	break;
+@@ -246,6 +254,8 @@ static struct poptOption rpmBuildPoptTable[] = {
+ 	N_("build through %install (%prep, %build, then install) from <source package>"),
+ 	N_("<source package>") },
+ 
++ { "buildroot", '\0', POPT_ARG_STRING, 0,  POPT_BUILDROOT,
++	N_("override build root (DEPRECATED)"), "DIRECTORY" },
+  { "build-in-place", '\0', 0, 0, POPT_BUILDINPLACE,
+ 	N_("run build in current directory"), NULL },
+  { "clean", '\0', 0, 0, POPT_RMBUILD,
+-- 
+2.45.1
+
