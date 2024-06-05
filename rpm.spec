@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 7
+%global baserelease 8
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -159,6 +159,7 @@ rpm-4.19.91-weak-user-group.patch
 0001-Minimally-bring-back-buildroot-cli-switch-for-cpack.patch
 0002-Minimally-bring-back-_buildrootdir-for-backwards-com.patch
 0003-Require-buildsubdir-to-be-defined-to-get-debuginfo-p.patch
+0001-Always-clear-the-RPMEXPAND_KEEP_QUOTED-flag-if-we-do.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -661,6 +662,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Wed Jun 05 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-8
+- Fix leaking \x1f at macro argument boundaries (#2284187)
+
 * Tue Jun 04 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-7
 - Resurrect rpmbuild --buildroot option for cpack (#2284124)
 - Bring back %%{buildsubdir} requirement for debuginfo generation
