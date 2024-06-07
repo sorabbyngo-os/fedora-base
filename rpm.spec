@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 8
+%global baserelease 9
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -662,6 +662,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Fri Jun 07 2024 Python Maint <python-maint@redhat.com> - 4.19.91-9
+- Rebuilt for Python 3.13
+
 * Wed Jun 05 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-8
 - Fix leaking \x1f at macro argument boundaries (#2284187)
 
