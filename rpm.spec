@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 9
+%global baserelease 10
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -160,6 +160,7 @@ rpm-4.19.91-weak-user-group.patch
 0002-Minimally-bring-back-_buildrootdir-for-backwards-com.patch
 0003-Require-buildsubdir-to-be-defined-to-get-debuginfo-p.patch
 0001-Always-clear-the-RPMEXPAND_KEEP_QUOTED-flag-if-we-do.patch
+0001-Improve-_builddir-backwards-compatibility.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -662,6 +663,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon Jun 10 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-10
+- Improve backwards compatibility wrt %%{_builddir} use in specs (#2284193)
+
 * Fri Jun 07 2024 Python Maint <python-maint@redhat.com> - 4.19.91-9
 - Rebuilt for Python 3.13
 

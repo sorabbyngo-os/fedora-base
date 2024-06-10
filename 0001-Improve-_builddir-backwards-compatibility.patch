@@ -1,0 +1,142 @@
+From 371a0a5aae45c75e56ffd1a268f70afce5624850 Mon Sep 17 00:00:00 2001
+Message-ID: <371a0a5aae45c75e56ffd1a268f70afce5624850.1717998944.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 7 Jun 2024 13:38:11 +0300
+Subject: [PATCH] Improve %{_builddir} backwards compatibility
+
+Yet another %{_builddir} related quirk: it's not uncommon for packages
+to do things like this at the top of the spec:
+
+    %global vpath_build %{_builddir}/%{buildsubdir}/vpathbuild
+
+The problem here being use of %global, long before these macros are defined
+at all. If %define was used this was no problem at all, but it only
+works with %global if these macros are either in their final value, or
+not defined at all. And with our new fancy intermediate builddir
+hackery, %{_builddir} is neither, which makes the behavior inconsistent.
+
+%global and %define *are* different and no amount of trickery can (or
+should) make that go away, but as this breaks existing users it's worth
+trying to bend over a bit. So funnily enough, the best fix for this is
+to UNDEFINE %{_builddir} for the initial spec parse stage. Any later
+uses where it actually matters will get re-expanded with the right
+value. Or in other words, lets keep digging the hole, I'm sure we'll
+break through to the other side soon...
+
+Add couple of tests for the expected builddir behaviors
+
+Fixes: #3151
+---
+ build/parsePreamble.c       |  8 --------
+ build/parseSpec.c           | 13 +++++++++++++
+ tests/data/SPECS/mydir.spec | 22 ++++++++++++++++++++++
+ tests/rpmbuild.at           | 24 ++++++++++++++++++++++++
+ 4 files changed, 59 insertions(+), 8 deletions(-)
+ create mode 100644 tests/data/SPECS/mydir.spec
+
+diff --git a/build/parsePreamble.c b/build/parsePreamble.c
+index 43812f4f9..20bb3e294 100644
+--- a/build/parsePreamble.c
++++ b/build/parsePreamble.c
+@@ -1286,14 +1286,6 @@ int parsePreamble(rpmSpec spec, int initialPackage, enum parseStages stage)
+ 	}
+ 
+ 	if (!spec->buildDir) {
+-	    /* Grab top builddir on first entry as we'll override _builddir */
+-	    if (!rpmMacroIsDefined(spec->macros, "_top_builddir")) {
+-		char *top_builddir = rpmExpand("%{_builddir}", NULL);
+-		rpmPushMacroFlags(spec->macros, "_top_builddir", NULL,
+-				top_builddir, RMIL_GLOBAL, RPMMACRO_LITERAL);
+-		free(top_builddir);
+-	    }
+-
+ 	    /* Using release here causes a buildid no-recompute test to fail */
+ 	    spec->buildDir = rpmExpand("%{_top_builddir}/%{NAME}-%{VERSION}-build", NULL);
+ 	    /* Override toplevel _builddir for backwards compatibility */
+diff --git a/build/parseSpec.c b/build/parseSpec.c
+index 440cb0b1b..fd822499b 100644
+--- a/build/parseSpec.c
++++ b/build/parseSpec.c
+@@ -1298,6 +1298,19 @@ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
+     /* If explicit --buildroot was passed, grab hold of it */
+     if (buildRoot)
+ 	spec->buildRoot = xstrdup(buildRoot);
++
++    /* Grab top builddir on first entry as we'll override _builddir */
++    if (!rpmMacroIsDefined(spec->macros, "_top_builddir")) {
++	char *top_builddir = rpmExpand("%{_builddir}", NULL);
++	rpmPushMacroFlags(spec->macros, "_top_builddir", NULL,
++			top_builddir, RMIL_GLOBAL, RPMMACRO_LITERAL);
++
++	/* Undefine (!!) %_builddir so %global misuses fall through */
++	while (rpmMacroIsDefined(spec->macros, "_builddir"))
++	    rpmPopMacro(spec->macros, "_builddir");
++	free(top_builddir);
++    }
++
+     rpmPushMacro(NULL, "_docdir", NULL, "%{_defaultdocdir}", RMIL_SPEC);
+     rpmPushMacro(NULL, "_licensedir", NULL, "%{_defaultlicensedir}", RMIL_SPEC);
+     spec->recursing = recursing;
+diff --git a/tests/data/SPECS/mydir.spec b/tests/data/SPECS/mydir.spec
+new file mode 100644
+index 000000000..130aba29e
+--- /dev/null
++++ b/tests/data/SPECS/mydir.spec
+@@ -0,0 +1,22 @@
++# these *are* different but %%global is widely misused, it only works
++# because rpm lets the undefined macros pass for later expansion
++%global mydir1 %{_builddir}/%{buildsubdir}
++%define mydir2 %{_builddir}/%{buildsubdir}
++
++Name: mydir
++Version: 1.0
++Release: 1
++BuildArch: noarch
++Summary: Test builddir oddities
++License: GPL
++
++%prep
++%setup -T -c
++
++%build
++echo mydir1=%{mydir1}
++echo mydir2=%{mydir2}
++
++%install
++
++%files
+diff --git a/tests/rpmbuild.at b/tests/rpmbuild.at
+index 8205722d5..a33195dc4 100644
+--- a/tests/rpmbuild.at
++++ b/tests/rpmbuild.at
+@@ -3328,3 +3328,27 @@ runroot rpm -qpl /build/RPMS/noarch/brtest-1.0-1.noarch.rpm
+ ],
+ [])
+ RPMTEST_CLEANUP
++
++AT_SETUP([builddir])
++AT_KEYWORDS([build builddir])
++
++RPMDB_INIT
++# Trick for compatibly getting the builddir out of old and new rpm
++RPMTEST_CHECK([
++runroot rpmbuild -bc --short-circuit --define '__spec_build_pre echo builddir=%{_builddir}; exit 0' /data/SPECS/hello.spec | awk /^builddir/
++],
++[0],
++[builddir=/build/BUILD/hello-1.0-build
++],
++[])
++
++# Test for %{_builddir} related %global misuse workaround
++RPMTEST_CHECK([
++runroot rpmbuild -bc /data/SPECS/mydir.spec 2>&1 | awk /^mydir/
++],
++[0],
++[mydir1=/build/BUILD/mydir-1.0-build/mydir-1.0
++mydir2=/build/BUILD/mydir-1.0-build/mydir-1.0
++],
++[])
++RPMTEST_CLEANUP
+-- 
+2.45.1
+
