@@ -28,7 +28,7 @@
 %global rpmver 4.19.91
 #global snapver rc1
 %global baserelease 10
-%global sover 10
+%global sover 11
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:rpm-%(echo %{rpmver} | cut -d'.' -f1-2).x}
@@ -161,6 +161,7 @@ rpm-4.19.91-weak-user-group.patch
 0003-Require-buildsubdir-to-be-defined-to-get-debuginfo-p.patch
 0001-Always-clear-the-RPMEXPAND_KEEP_QUOTED-flag-if-we-do.patch
 0001-Improve-_builddir-backwards-compatibility.patch
+0001-Fix-signfiles-regression-from-13a02b15d6552bc8e44023.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -663,6 +664,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue Jun 11 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-11
+- Fix signfiles regression from refactoring (#2291183)
+
 * Mon Jun 10 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-10
 - Improve backwards compatibility wrt %%{_builddir} use in specs (#2284193)
 
