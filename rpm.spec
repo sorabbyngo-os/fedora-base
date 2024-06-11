@@ -27,8 +27,8 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 10
-%global sover 11
+%global baserelease 11
+%global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:rpm-%(echo %{rpmver} | cut -d'.' -f1-2).x}
