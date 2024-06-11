@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.91
 #global snapver rc1
-%global baserelease 11
+%global baserelease 12
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -664,6 +664,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue Jun 11 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-12
+- Rebuild for Python 3.13 again
+
 * Tue Jun 11 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-11
 - Fix signfiles regression from refactoring (#2291183)
 
