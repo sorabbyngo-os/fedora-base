@@ -1,0 +1,97 @@
+From ce349fa6f10b7ac52250a16a57cf31c868ac54bf Mon Sep 17 00:00:00 2001
+Message-ID: <ce349fa6f10b7ac52250a16a57cf31c868ac54bf.1718196773.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 12 Jun 2024 10:17:05 +0300
+Subject: [PATCH] Avoid special characters from %{VERSION} in %builddir
+
+%setup always defaulted to %{name}-%{version} as the directory name,
+but most projects would only have regular characters in their tarball
+path components (and those that did, could be expected to deal with it).
+And when using tilde/caret in Version you'd use `%setup -n <path>` instead.
+This changed with the new %builddir in 4.20 where caret and tilde from
+version leak into build paths, and nowhere near all build systems,
+helper scripts and whatnot properly escape/quote all the paths they
+handle. Such as apparently ninja-build, reported in
+https://bugzilla.redhat.com/show_bug.cgi?id=2290987
+
+Convert ^ and ~ in builddir to underscores. Note we specifically only
+convert that for the per-package %builddir we create, if somebody sets
+the top build directory to a path that includes such oddities, that's
+explicitly *their* responsibility.
+
+Fixes: #3159
+---
+ build/parsePreamble.c            | 10 +++++++++-
+ tests/data/SPECS/weirdnames.spec |  7 +++++++
+ tests/rpmbuild.at                |  6 ++++--
+ 3 files changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/build/parsePreamble.c b/build/parsePreamble.c
+index 20bb3e294..8b0c4c527 100644
+--- a/build/parsePreamble.c
++++ b/build/parsePreamble.c
+@@ -1287,7 +1287,15 @@ int parsePreamble(rpmSpec spec, int initialPackage, enum parseStages stage)
+ 
+ 	if (!spec->buildDir) {
+ 	    /* Using release here causes a buildid no-recompute test to fail */
+-	    spec->buildDir = rpmExpand("%{_top_builddir}/%{NAME}-%{VERSION}-build", NULL);
++	    char *bn = rpmExpand("%{NAME}-%{VERSION}-build", NULL);
++	    /* Tilde and caret in paths are evil, convert to underscores */
++	    for (char *t = bn; *t; t++) {
++		if (*t == '^' || *t == '~')
++		    *t = '_';
++	    }
++	    spec->buildDir = rpmExpand("%{_top_builddir}/", bn, NULL);
++	    free(bn);
++
+ 	    /* Override toplevel _builddir for backwards compatibility */
+ 	    rpmPushMacroFlags(spec->macros, "_builddir", NULL, spec->buildDir,
+ 				RMIL_SPEC, RPMMACRO_LITERAL);
+diff --git a/tests/data/SPECS/weirdnames.spec b/tests/data/SPECS/weirdnames.spec
+index e241e4c26..2d4354a43 100644
+--- a/tests/data/SPECS/weirdnames.spec
++++ b/tests/data/SPECS/weirdnames.spec
+@@ -1,7 +1,12 @@
+ %bcond_with illegal
++%bcond_with weirdver
+ 
+ Name:		weirdnames
++%if %{with weirdver}
++Version:	1.0~aa^bb
++%else
+ Version:	1.0
++%endif
+ Release:	1
+ Summary:	Testing weird filename behavior
+ License:	GPL
+@@ -10,6 +15,8 @@ BuildArch:	noarch
+ %description
+ %{summary}
+ 
++%build
++
+ %install
+ mkdir -p %{buildroot}/opt
+ cd %{buildroot}/opt
+diff --git a/tests/rpmbuild.at b/tests/rpmbuild.at
+index a6f038aee..56e79c989 100644
+--- a/tests/rpmbuild.at
++++ b/tests/rpmbuild.at
+@@ -3336,10 +3336,12 @@ AT_KEYWORDS([build builddir])
+ RPMDB_INIT
+ # Trick for compatibly getting the builddir out of old and new rpm
+ RPMTEST_CHECK([
+-runroot rpmbuild -bc --short-circuit --define '__spec_build_pre echo builddir=%{_builddir}; exit 0' /data/SPECS/hello.spec | awk /^builddir/
++runroot rpmbuild \
++	--with weirdver \
++	-bc --short-circuit --define '__spec_build_pre echo builddir=%{_builddir}; exit 0' /data/SPECS/weirdnames.spec 2>&1 | awk /^builddir/
+ ],
+ [0],
+-[builddir=/build/BUILD/hello-1.0-build
++[builddir=/build/BUILD/weirdnames-1.0_aa_bb-build
+ ],
+ [])
+ 
+-- 
+2.45.1
+
