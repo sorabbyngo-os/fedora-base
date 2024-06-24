@@ -25,9 +25,9 @@
 
 %define rpmhome /usr/lib/rpm
 
-%global rpmver 4.19.91
+%global rpmver 4.19.92
 #global snapver rc1
-%global baserelease 13
+%global baserelease 1
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -148,21 +148,6 @@ rpm-4.19.91-weak-user-group.patch
 0001-Revert-Add-a-deprecation-warning-for-clamp_mtime_to_.patch
 
 # Patches already upstream:
-0001-Ensure-noarch-packages-don-t-get-debuginfo.patch
-0001-Fix-noprep-regression-from-introducing-mkbuilddir.patch
-0002-Drop-an-accidentally-added-duplicated-test.patch
-0003-Make-build-in-place-much-less-of-a-hack-and-also-wor.patch
-0001-Fix-incomplete-header-on-plain-src.rpm-build-modes-r.patch
-0001-Hammer-in-no-debuginfo-for-noarch-packages-damn-it-r.patch
-0001-Fix-regression-on-subpackage-debuginfo-RPMTAG_SOURCE.patch
-0001-Fix-a-buildroot-regression-on-an-early-__spec_instal.patch
-0001-Minimally-bring-back-buildroot-cli-switch-for-cpack.patch
-0002-Minimally-bring-back-_buildrootdir-for-backwards-com.patch
-0003-Require-buildsubdir-to-be-defined-to-get-debuginfo-p.patch
-0001-Always-clear-the-RPMEXPAND_KEEP_QUOTED-flag-if-we-do.patch
-0001-Improve-_builddir-backwards-compatibility.patch
-0001-Fix-signfiles-regression-from-13a02b15d6552bc8e44023.patch
-0001-Avoid-special-characters-from-VERSION-in-builddir.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -665,6 +650,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon Jun 24 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.92-1
+- Rebase to 4.20 beta1
+
 * Wed Jun 12 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.91-13
 - Avoid tilde and caret in the builddir path (#2290987)
 
