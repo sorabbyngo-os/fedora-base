@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.92
 #global snapver rc1
-%global baserelease 1
+%global baserelease 2
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -650,6 +650,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Thu Jul 04 2024 Peter Robinson <pbrobinson@fedoraproject.org> - 4.19.92-2
+- Rebuild for ima-evm-utils 1.6
+
 * Mon Jun 24 2024 Panu Matilainen <pmatilai@redhat.com> - 4.19.92-1
 - Rebase to 4.20 beta1
 
