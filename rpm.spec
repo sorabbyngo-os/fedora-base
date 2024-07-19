@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.92
 #global snapver rc1
-%global baserelease 4
+%global baserelease 5
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -650,6 +650,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Fri Jul 19 2024 Fedora Release Engineering <releng@fedoraproject.org> - 4.19.92-5
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_41_Mass_Rebuild
+
 * Wed Jul 17 2024 Zbigniew Jedrzejewski-Szmek <zbyszek@in.waw.pl> - 4.19.92-4
 - Disable patch to set %%_sbindir the same as %%_bindir
 
