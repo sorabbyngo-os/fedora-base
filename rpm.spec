@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.92
 #global snapver rc1
-%global baserelease 5
+%global baserelease 6
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -151,6 +151,7 @@ rpm-4.19.91-weak-user-group.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
+0001-Fix-division-by-zero-in-elfdeps-RhBug-2299414.patch
 
 %description
 The RPM Package Manager (RPM) is a powerful command line driven
@@ -650,6 +651,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Thu Aug 01 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.92-6
+- Fix division by zero in elfdeps (#2299414)
+
 * Fri Jul 19 2024 Fedora Release Engineering <releng@fedoraproject.org> - 4.19.92-5
 - Rebuilt for https://fedoraproject.org/wiki/Fedora_41_Mass_Rebuild
 
