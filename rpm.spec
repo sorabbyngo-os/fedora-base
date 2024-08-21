@@ -23,6 +23,9 @@
 # build with sequoia crypto?
 %bcond_without sequoia
 
+# https://fedoraproject.org/wiki/Changes/Unify_bin_and_sbin
+%bcond merged_sbin 0
+
 %define rpmhome /usr/lib/rpm
 
 %global rpmver 4.19.92
@@ -152,6 +155,11 @@ rpm-4.19.91-weak-user-group.patch
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
 0001-Fix-division-by-zero-in-elfdeps-RhBug-2299414.patch
+
+%if %{with merged_sbin}
+# Make %%_sbindir and %%_bindir the same
+rpm-4.19.1-unify-bindir-sbindir.patch
+%endif
 
 %description
 The RPM Package Manager (RPM) is a powerful command line driven
