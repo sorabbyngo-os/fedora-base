@@ -28,9 +28,9 @@
 
 %define rpmhome /usr/lib/rpm
 
-%global rpmver 4.19.92
+%global rpmver 4.19.93
 #global snapver rc1
-%global baserelease 6
+%global baserelease 1
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -154,7 +154,6 @@ rpm-4.19.91-weak-user-group.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
-0001-Fix-division-by-zero-in-elfdeps-RhBug-2299414.patch
 
 %if %{with merged_sbin}
 # Make %%_sbindir and %%_bindir the same
@@ -659,6 +658,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue Sep 03 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.93-1
+- Rebase to 4.20 rc1
+
 * Thu Aug 01 2024 Michal Domonkos <mdomonko@redhat.com> - 4.19.92-6
 - Fix division by zero in elfdeps (#2299414)
 
