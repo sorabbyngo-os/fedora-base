@@ -28,7 +28,7 @@
 
 %global rpmver 4.20.0
 #global snapver rc1
-%global baserelease 2
+%global baserelease 3
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -134,6 +134,11 @@ rpm-4.19.91-weak-user-group.patch
 0001-Revert-Add-a-deprecation-warning-for-clamp_mtime_to_.patch
 
 # Patches already upstream:
+# Silence extra output on rpmspeq query on Buildsystem specs
+# https://github.com/rpm-software-management/rpm/pull/3414
+# Fixes: Regression: addtional output in rpmspec with -q
+# https://github.com/rpm-software-management/rpm/issues/3413
+0001-Silence-extra-output-on-rpmspec-query-on-Buildsystem.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -619,6 +624,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Thu Dec 12 2024 Benjamin A. Beasley <code@musicinmybrain.net> - 4.20.0-3
+- Fix unwanted rpmspec output when there are dynamic sections
+
 * Tue Dec 10 2024 Michal Domonkos <mdomonko@redhat.com> - 4.20.0-2
 - Drop build option for legacy OpenPGP parser (#2239780)
 - Fix Python examples directory ownership (#2279750)
