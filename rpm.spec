@@ -639,7 +639,7 @@ fi
 %artifact %{python3_sitearch}/rpm/__pycache__/
 
 # Python examples
-%{_defaultdocdir}/rpm/examples/*.py
+%{_defaultdocdir}/rpm/examples/
 
 %files devel
 %{_mandir}/man8/rpmgraph.8*
@@ -658,6 +658,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue Dec 10 2024 Michal Domonkos <mdomonko@redhat.com> - 4.20.0-2
+- Fix Python examples directory ownership (#2279750)
+
 * Mon Oct 07 2024 Michal Domonkos <mdomonko@redhat.com> - 4.20.0-1
 - Rebase to 4.20.0
 
