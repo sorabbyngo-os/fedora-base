@@ -20,8 +20,6 @@
 %bcond_without sqlite
 # build with bdb_ro support?
 %bcond_without bdb_ro
-# build with sequoia crypto?
-%bcond_without sequoia
 
 # https://fedoraproject.org/wiki/Changes/Unify_bin_and_sbin
 %bcond merged_sbin 0
@@ -102,14 +100,7 @@ BuildRequires: pandoc
 BuildRequires: doxygen
 %endif
 
-
-%if %{with sequoia}
-%global crypto sequoia
 BuildRequires: rpm-sequoia-devel >= 1.4.0
-%else
-%global crypto openssl
-BuildRequires: openssl-devel
-%endif
 
 # Couple of patches change makefiles so, require for now...
 BuildRequires: automake libtool
@@ -171,12 +162,10 @@ the package like its version, a description, etc.
 Summary:  Libraries for manipulating RPM packages
 License:  GPL-2.0-or-later OR LGPL-2.1-or-later
 Requires(meta): %{name} = %{version}-%{release}
-%if %{with sequoia}
 # >= 1.4.0 required for pgpVerifySignature2() and pgpPrtParams2()
 Requires: rpm-sequoia%{_isa} >= 1.4.0
 # Most systems should have a central package operations log
 Recommends: rpm-plugin-audit
-%endif
 
 %description libs
 This package contains the RPM shared libraries.
@@ -391,8 +380,6 @@ cmake \
       %{?with_libimaevm:-DWITH_IMAEVM=ON} \
       %{!?with_libarchive:-DWITH_ARCHIVE=OFF} \
       %{!?with_check:-DENABLE_TESTSUITE=OFF} \
-      %{!?with_sequoia:-DWITH_INTERNAL_OPENPGP=ON} \
-      %{!?with_sequoia:-DWITH_OPENSSL=ON } \
       -DRPM_VENDOR=redhat \
   ..
 
@@ -659,6 +646,7 @@ fi
 
 %changelog
 * Tue Dec 10 2024 Michal Domonkos <mdomonko@redhat.com> - 4.20.0-2
+- Drop build option for legacy OpenPGP parser (#2239780)
 - Fix Python examples directory ownership (#2279750)
 
 * Mon Oct 07 2024 Michal Domonkos <mdomonko@redhat.com> - 4.20.0-1
