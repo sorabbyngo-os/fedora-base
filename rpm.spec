@@ -28,7 +28,7 @@
 
 %global rpmver 4.20.0
 #global snapver rc1
-%global baserelease 1
+%global baserelease 2
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -43,9 +43,6 @@ License: GPL-2.0-or-later
 Source0: http://ftp.rpm.org/releases/%{srcdir}/rpm-%{srcver}.tar.bz2
 
 Source10: rpmdb-rebuild.service
-
-Source20: rpmdb-migrate.service
-Source21: rpmdb_migrate
 
 Requires: coreutils
 Requires: popt%{_isa} >= 1.10.2.1
@@ -118,11 +115,6 @@ BuildRequires: ima-evm-utils-devel >= 1.0
 %if %{with fsverity}
 BuildRequires: fsverity-utils-devel
 %endif
-
-# For the rpmdb migration scriptlet (#2055033)
-Requires(pre): coreutils
-Requires(pre): findutils
-Requires(pre): sed
 
 %patchlist
 # Set rpmdb path to /usr/lib/sysimage/rpm
@@ -397,10 +389,8 @@ cd ..
 
 mkdir -p $RPM_BUILD_ROOT%{_unitdir}
 install -m 644 %{SOURCE10} $RPM_BUILD_ROOT/%{_unitdir}
-install -m 644 %{SOURCE20} $RPM_BUILD_ROOT/%{_unitdir}
 
 mkdir -p $RPM_BUILD_ROOT%{rpmhome}
-install -m 755 %{SOURCE21} $RPM_BUILD_ROOT/%{rpmhome}
 
 # Built-in replacement for systemd-sysusers(8)
 install -m 755 scripts/sysusers.sh $RPM_BUILD_ROOT/%{rpmhome}
@@ -446,21 +436,6 @@ if [ -d /var/lib/rpm ]; then
     done
 fi
 
-%triggerun -- rpm < 4.17.0-7
-# Handle rpmdb migrate service on erasure of old to avoid ordering issues
-if [ -x /usr/bin/systemctl ]; then
-    systemctl --no-reload preset rpmdb-migrate ||:
-fi
-
-%posttrans
-if [ -d /var/lib/rpm ]; then
-    touch /var/lib/rpm/.migratedb
-fi
-if [ ! -d /var/lib/rpm ] && [ -d /usr/lib/sysimage/rpm ] && [ ! -f /usr/lib/sysimage/rpm/.rpmdbdirsymlink_created ]; then
-    ln -sfr /usr/lib/sysimage/rpm /var/lib/rpm
-    touch /usr/lib/sysimage/rpm/.rpmdbdirsymlink_created
-fi
-
 %files -f _build/rpm.lang
 %license COPYING
 %doc CREDITS docs/manual/[a-z]*
@@ -470,7 +445,6 @@ fi
 %doc %{_defaultdocdir}/rpm/README
 
 %{_unitdir}/rpmdb-rebuild.service
-%{_unitdir}/rpmdb-migrate.service
 
 %dir %{_sysconfdir}/rpm
 
@@ -648,6 +622,7 @@ fi
 * Tue Dec 10 2024 Michal Domonkos <mdomonko@redhat.com> - 4.20.0-2
 - Drop build option for legacy OpenPGP parser (#2239780)
 - Fix Python examples directory ownership (#2279750)
+- Drop rpmdb migration scripts (#2274332)
 
 * Mon Oct 07 2024 Michal Domonkos <mdomonko@redhat.com> - 4.20.0-1
 - Rebase to 4.20.0
