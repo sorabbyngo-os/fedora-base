@@ -624,6 +624,10 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Fri Jan 10 2025 Zbigniew Jędrzejewski-Szmek <zbyszek@in.waw.pl> - 4.20.0-4
+- Merge /usr/sbin and /usr/bin (2nd attempt)
+  https://fedoraproject.org/wiki/Changes/Unify_bin_and_sbin
+
 * Thu Dec 12 2024 Benjamin A. Beasley <code@musicinmybrain.net> - 4.20.0-3
 - Fix unwanted rpmspec output when there are dynamic sections
 
