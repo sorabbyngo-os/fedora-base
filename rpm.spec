@@ -28,7 +28,7 @@
 
 %global rpmver 4.20.0
 #global snapver rc1
-%global baserelease 4
+%global baserelease 5
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -126,7 +126,6 @@ rpm-4.9.90-no-man-dirs.patch
 
 # Disable new user/group handling
 rpm-4.18.92-disable-sysusers.patch
-rpm-4.19.91-weak-user-group.patch
 
 # Temporarily disable the deprecation warning for
 # %%clamp_mtime_to_source_date_epoch, details here:
@@ -624,6 +623,10 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon Jan 10 2025 Panu Matilainen <pmatilai@redhat.com> - 4.20.0-5
+- Enable hard dependencies for users and groups as a part of
+  https://fedoraproject.org/wiki/Changes/RPMSuportForSystemdSysusers
+
 * Fri Jan 10 2025 Zbigniew Jędrzejewski-Szmek <zbyszek@in.waw.pl> - 4.20.0-4
 - Merge /usr/sbin and /usr/bin (2nd attempt)
   https://fedoraproject.org/wiki/Changes/Unify_bin_and_sbin
