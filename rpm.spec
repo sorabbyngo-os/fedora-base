@@ -623,7 +623,7 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
-* Mon Jan 10 2025 Panu Matilainen <pmatilai@redhat.com> - 4.20.0-5
+* Mon Jan 13 2025 Panu Matilainen <pmatilai@redhat.com> - 4.20.0-5
 - Enable hard dependencies for users and groups as a part of
   https://fedoraproject.org/wiki/Changes/RPMSuportForSystemdSysusers
 
