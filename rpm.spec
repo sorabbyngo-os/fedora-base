@@ -26,11 +26,16 @@
 
 %global rpmver 4.20.1
 #global snapver rc1
-%global baserelease 2
+%global baserelease 3
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:rpm-%(echo %{rpmver} | cut -d'.' -f1-2).x}
+
+# https://bugzilla.redhat.com/show_bug.cgi?id=2356219
+%ifarch %{ix86}
+%global _lto_cflags %{nil}
+%endif
 
 Summary: The RPM package management system
 Name: rpm
@@ -624,6 +629,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon Mar 31 2025 Panu Matilainen <pmatilai@redhat.com> - 4.20.1-3
+- Disable LTO on x86 as a workaround for #2356219
+
 * Mon Mar 31 2025 Panu Matilainen <pmatilai@redhat.com> - 4.20.1-2
 - Re-enable hard dependencies for users and groups as a part of
   https://fedoraproject.org/wiki/Changes/RPMSuportForSystemdSysusers
