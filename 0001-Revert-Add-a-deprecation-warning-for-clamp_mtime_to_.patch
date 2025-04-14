@@ -12,10 +12,10 @@ This reverts commit 4965331a55cedda5e423fe050e8da1245ab8b069.
  tests/rpmbuild.at                       | 28 +++----------------------
  4 files changed, 8 insertions(+), 28 deletions(-)
 
-diff --git a/build/files.c b/build/files.c
+diff --git a/build/files.cc b/build/files.cc
 index 2f7d1261a..eb0c26300 100644
---- a/build/files.c
-+++ b/build/files.c
+--- a/build/files.cc
++++ b/build/files.cc
 @@ -1044,8 +1044,6 @@ static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isS
          if (srcdate && rpmExpandNumeric("%{?clamp_mtime_to_source_date_epoch}")) {
  	    free(mtime_policy_str);
@@ -25,94 +25,3 @@ index 2f7d1261a..eb0c26300 100644
  	}
      }
  
-diff --git a/tests/data/SPECS/source_date_epoch.spec b/tests/data/SPECS/source_date_epoch.spec
-index 3436b243f..77f87cc02 100644
---- a/tests/data/SPECS/source_date_epoch.spec
-+++ b/tests/data/SPECS/source_date_epoch.spec
-@@ -5,6 +5,10 @@ Summary: test SOURCE_DATE_EPOCH
- License: GPLv2
- BuildArch: noarch
- 
-+%global source_date_epoch_from_changelog 0
-+%global clamp_mtime_to_source_date_epoch 1
-+%global use_source_date_epoch_as_buildtime 1
-+
- %description
- 
- %build
-diff --git a/tests/pinned/common/buildrepr.sh b/tests/pinned/common/buildrepr.sh
-index f1cdd5174..e4bacb2db 100644
---- a/tests/pinned/common/buildrepr.sh
-+++ b/tests/pinned/common/buildrepr.sh
-@@ -6,7 +6,7 @@ runroot rpmbuild -bb --quiet \
- 	--define "_buildhost localhost" \
- 	--define "use_source_date_epoch_as_buildtime 1" \
- 	--define "source_date_epoch_from_changelog 1" \
--	--define "build_mtime_policy clamp_to_source_date_epoch" \
-+	--define "clamp_mtime_to_source_date_epoch 1" \
- 	--define "_use_weak_usergroup_deps 0" \
- 	/data/SPECS/attrtest.spec
- 
-diff --git a/tests/rpmbuild.at b/tests/rpmbuild.at
-index 0e1c628d6..ecd5c09b4 100644
---- a/tests/rpmbuild.at
-+++ b/tests/rpmbuild.at
-@@ -618,7 +618,7 @@ runroot \
-   rpmbuild \
-   -bb --quiet \
-   --define "use_source_date_epoch_as_buildtime 1" \
--  --define "build_mtime_policy clamp_to_source_date_epoch" \
-+  --define "clamp_mtime_to_source_date_epoch 1" \
-   /data/SPECS/attrtest.spec
- 
- RPMTEST_CHECK([[
-@@ -689,7 +689,7 @@ runroot \
-   rpmbuild \
-   -bb --quiet \
-   --define "use_source_date_epoch_as_buildtime 1" \
--  --define "build_mtime_policy clamp_to_source_date_epoch" \
-+  --define "clamp_mtime_to_source_date_epoch 1" \
-   /data/SPECS/source_date_epoch.spec
- 
- runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
-@@ -710,7 +710,7 @@ runroot \
-   rpmbuild \
-   -bb --quiet \
-   --define "use_source_date_epoch_as_buildtime 1" \
--  --define "build_mtime_policy clamp_to_source_date_epoch" \
-+  --define "clamp_mtime_to_source_date_epoch 1" \
-   /data/SPECS/source_date_epoch.spec
- 
- runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
-@@ -721,28 +721,6 @@ runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
- [])
- RPMTEST_CLEANUP
- 
--AT_SETUP([rpmbuild _buildtime macro])
--AT_KEYWORDS([build])
--RPMTEST_CHECK([
--RPMDB_INIT
--
--runroot \
--  rpmbuild \
--  -bb --quiet \
--  --define "_buildtime 1699460418" \
--  --define "build_mtime_policy clamp_to_buildtime" \
--  /data/SPECS/source_date_epoch.spec
--
--runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
--runroot rpm -q --qf '%{BUILDTIME}\n' /build/RPMS/noarch/test-1-1.noarch.rpm
--],
--[0],
--[/0.txt 15 1699460418 91751cee0a1ab8414400238a761411daa29643ab4b8243e9a91649e25be53ada 0100644 root root 0 0 0 X
--1699460418
--],
--[])
--RPMTEST_CLEANUP
--
- AT_SETUP([rpmbuild unpackaged files])
- AT_KEYWORDS([build])
- RPMDB_INIT
--- 
-2.45.1
-
