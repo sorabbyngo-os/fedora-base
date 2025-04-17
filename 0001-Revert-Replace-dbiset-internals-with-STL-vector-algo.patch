@@ -1,0 +1,271 @@
+From 3135ac8a8a12bd2cfd88a4933aa9b5540efcb3de Mon Sep 17 00:00:00 2001
+Message-ID: <3135ac8a8a12bd2cfd88a4933aa9b5540efcb3de.1744874925.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Thu, 17 Apr 2025 10:21:11 +0300
+Subject: [PATCH] Revert "Replace dbiset internals with STL vector +
+ algorithms"
+
+This is the cause of https://bugzilla.redhat.com/show_bug.cgi?id=2360342
+
+This reverts commit 52f311e224254d7cb28bf2ced22db7b50e1a2653.
+---
+ lib/backend/dbiset.cc | 145 +++++++++++++++++++++++++++---------------
+ lib/backend/dbiset.hh |   3 -
+ 2 files changed, 94 insertions(+), 54 deletions(-)
+
+diff --git a/lib/backend/dbiset.cc b/lib/backend/dbiset.cc
+index 14b6d7857..f6ee8ac44 100644
+--- a/lib/backend/dbiset.cc
++++ b/lib/backend/dbiset.cc
+@@ -1,30 +1,14 @@
+ #include "system.h"
+-
+-#include <vector>
+-#include <algorithm>
+-
+ #include <string.h>
+ #include <stdlib.h>
+ #include "dbiset.hh"
+ #include "debug.h"
+ 
+-using std::vector;
+-
+-bool dbiIndexItem_s::operator < (const dbiIndexItem_s & other) const
+-{
+-    if (hdrNum == other.hdrNum)
+-	return tagNum < other.tagNum;
+-    return hdrNum < other.hdrNum;
+-}
+-
+-bool dbiIndexItem_s::operator == (const dbiIndexItem_s & other) const
+-{
+-    return (hdrNum == other.hdrNum && tagNum == other.tagNum);
+-}
+-
+ /* Items retrieved from the index database.*/
+ struct RPM_GNUC_INTERNAL dbiIndexSet_s {
+-    vector<dbiIndexItem_s> recs;	/*!< array of records */
++    dbiIndexItem recs;			/*!< array of records */
++    unsigned int count;			/*!< number of records */
++    size_t alloced;			/*!< alloced size */
+ };
+ 
+ dbiIndexSet dbiIndexSetNew(unsigned int sizehint)
+@@ -35,38 +19,76 @@ dbiIndexSet dbiIndexSetNew(unsigned int sizehint)
+     return set;
+ }
+ 
++/* 
++ * Ensure sufficient memory for nrecs of new records in dbiIndexSet.
++ * Allocate in power of two sizes to avoid memory fragmentation, so
++ * realloc is not always needed.
++ */
+ void dbiIndexSetGrow(dbiIndexSet set, unsigned int nrecs)
+ {
+-    set->recs.reserve(nrecs);
++    size_t need = (set->count + nrecs) * sizeof(*(set->recs));
++    size_t alloced = set->alloced ? set->alloced : 1 << 4;
++
++    while (alloced < need)
++	alloced <<= 1;
++
++    if (alloced != set->alloced) {
++	set->recs = xrealloc(set->recs, alloced);
++	set->alloced = alloced;
++    }
+ }
+ 
+ void dbiIndexSetClear(dbiIndexSet set)
+ {
+     if (set)
+-	set->recs.clear();
++	set->count = 0;
+ }
+ 
+-void dbiIndexSetSort(dbiIndexSet set)
++static int hdrNumCmp(const void * one, const void * two)
+ {
+-    if (set)
+-	std::sort(set->recs.begin(), set->recs.end());
++    const struct dbiIndexItem_s *a = (const struct dbiIndexItem_s *)one;
++    const struct dbiIndexItem_s *b = (const struct dbiIndexItem_s *)two;
++    if (a->hdrNum - b->hdrNum != 0)
++	return a->hdrNum - b->hdrNum;
++    return a->tagNum - b->tagNum;
+ }
+ 
+-static bool hdrNumCmp(const dbiIndexItem_s & a, const dbiIndexItem_s & b)
++void dbiIndexSetSort(dbiIndexSet set)
+ {
+-    return (a.hdrNum == b.hdrNum);
++    /*
++     * mergesort is much (~10x with lots of identical basenames) faster
++     * than pure quicksort, but glibc uses msort_with_tmp() on stack.
++     */
++    if (set && set->recs && set->count > 1) {
++#ifdef HAVE_MERGESORT
++	mergesort(set->recs, set->count, sizeof(*set->recs), hdrNumCmp);
++#else
++	qsort(set->recs, set->count, sizeof(*set->recs), hdrNumCmp);
++#endif
++    }
+ }
+ 
+ void dbiIndexSetUniq(dbiIndexSet set, int sorted)
+ {
+-    if (set->recs.size() < 2)
++    unsigned int from;
++    unsigned int to = 0;
++    unsigned int num = set->count;
++
++    if (set->count < 2)
+ 	return;
+ 
+     if (!sorted)
+ 	dbiIndexSetSort(set);
+ 
+-    auto it = std::unique(set->recs.begin(), set->recs.end(), hdrNumCmp);
+-    set->recs.resize(std::distance(set->recs.begin(), it));
++    for (from = 0; from < num; from++) {
++	if (from > 0 && set->recs[from - 1].hdrNum == set->recs[from].hdrNum) {
++	    set->count--;
++	    continue;
++	}
++	if (from != to)
++	    set->recs[to] = set->recs[from]; /* structure assignment */
++	to++;
++    }
+ }
+ 
+ int dbiIndexSetAppendSet(dbiIndexSet set, dbiIndexSet oset, int sortset)
+@@ -74,9 +96,13 @@ int dbiIndexSetAppendSet(dbiIndexSet set, dbiIndexSet oset, int sortset)
+     if (set == NULL || oset == NULL)
+ 	return 1;
+ 
+-    set->recs.insert(set->recs.end(), oset->recs.begin(), oset->recs.end());
++    if (oset->count) {
++	dbiIndexSetGrow(set, oset->count);
++	memcpy(set->recs + set->count, oset->recs, oset->count * sizeof(*(set->recs)));
++	set->count += oset->count;
++    }
+     
+-    if (sortset && set->recs.size() > 1)
++    if (sortset && set->count > 1)
+ 	dbiIndexSetSort(set);
+ 
+     return 0;
+@@ -87,53 +113,69 @@ int dbiIndexSetAppendOne(dbiIndexSet set, unsigned int hdrNum,
+ {
+     if (set == NULL)
+ 	return 1;
++    dbiIndexSetGrow(set, 1);
+ 
+-    set->recs.emplace_back() = { hdrNum, tagNum };
++    set->recs[set->count].hdrNum = hdrNum;
++    set->recs[set->count].tagNum = tagNum;
++    set->count += 1;
+ 
+-    if (sortset && set->recs.size() > 1)
++    if (sortset && set->count > 1)
+ 	dbiIndexSetSort(set);
+ 
+     return 0;
+ }
+ 
++/* op 0 to prune, 1 to filter */
++static int dbiIndexSetPrune(dbiIndexSet set, dbiIndexSet oset, int op)
++{
++    unsigned int from;
++    unsigned int to = 0;
++    unsigned int num = set->count;
++    unsigned int numCopied = 0;
++    size_t recsize = sizeof(*oset->recs);
++
++    for (from = 0; from < num; from++) {
++	if ((bsearch(&set->recs[from], oset->recs, oset->count, recsize, hdrNumCmp) != NULL) == op) {
++	    set->count--;
++	    continue;
++	}
++	if (from != to)
++	    set->recs[to] = set->recs[from]; /* structure assignment */
++	to++;
++	numCopied++;
++    }
++    return (numCopied == num);
++}
++
+ int dbiIndexSetPruneSet(dbiIndexSet set, dbiIndexSet oset, int sorted)
+ {
+-    if (set->recs.empty() || oset == NULL || oset->recs.empty())
++
++    if (set->count == 0 || oset->count == 0)
+ 	return 1;
+ 
+-    if (oset->recs.size() > 1 && !sorted)
++    if (oset->count > 1 && !sorted)
+ 	dbiIndexSetSort(oset);
+ 
+-    vector<dbiIndexItem_s> diff;
+-    std::set_difference(set->recs.begin(), set->recs.end(),
+-			  oset->recs.begin(), oset->recs.end(),
+-			  std::back_inserter(diff));
+-    set->recs = diff;
+-    return 0;
++    return dbiIndexSetPrune(set, oset, 1);
+ }
+ 
+ int dbiIndexSetFilterSet(dbiIndexSet set, dbiIndexSet oset, int sorted)
+ {
+-    if (set->recs.empty() || oset == NULL || oset->recs.empty()) {
+-	unsigned int num = set->recs.size();
++    if (set->count == 0 || oset->count == 0) {
++	unsigned int num = set->count;
+ 	dbiIndexSetClear(set);
+ 	return num ? 0 : 1;
+     }
+ 
+-    if (oset->recs.size() > 1 && !sorted)
++    if (oset->count > 1 && !sorted)
+ 	dbiIndexSetSort(oset);
+ 
+-    vector<dbiIndexItem_s> isect;
+-    std::set_intersection(set->recs.begin(), set->recs.end(),
+-		      oset->recs.begin(), oset->recs.end(),
+-		      std::back_inserter(isect));
+-    set->recs = isect;
+-    return 0;
++    return dbiIndexSetPrune(set, oset, 0);
+ }
+ 
+ unsigned int dbiIndexSetCount(dbiIndexSet set)
+ {
+-    return (set != NULL) ? set->recs.size() : 0;
++    return (set != NULL) ? set->count : 0;
+ }
+ 
+ unsigned int dbiIndexRecordOffset(dbiIndexSet set, unsigned int recno)
+@@ -149,6 +191,7 @@ unsigned int dbiIndexRecordFileNumber(dbiIndexSet set, unsigned int recno)
+ dbiIndexSet dbiIndexSetFree(dbiIndexSet set)
+ {
+     if (set) {
++	free(set->recs);
+ 	delete set;
+     }
+     return NULL;
+diff --git a/lib/backend/dbiset.hh b/lib/backend/dbiset.hh
+index fdb28e96d..e8b06c078 100644
+--- a/lib/backend/dbiset.hh
++++ b/lib/backend/dbiset.hh
+@@ -7,9 +7,6 @@
+ typedef struct RPM_GNUC_INTERNAL dbiIndexItem_s {
+     unsigned int hdrNum;		/*!< header instance in db */
+     unsigned int tagNum;		/*!< tag index in header */
+-
+-    bool operator < (const dbiIndexItem_s & other) const;
+-    bool operator == (const dbiIndexItem_s & other) const;
+ } * dbiIndexItem;
+ 
+ typedef struct dbiIndexSet_s * dbiIndexSet;
+-- 
+2.49.0
+
