@@ -1,0 +1,151 @@
+From 492ff071da8b3a6b344122206834b68dc49746f3 Mon Sep 17 00:00:00 2001
+Message-ID: <492ff071da8b3a6b344122206834b68dc49746f3.1747030462.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 30 Apr 2025 11:42:17 +0300
+Subject: [PATCH] Fix a regression when calling rpmReadPackageFile() with NULL
+ ts
+
+Commit 09510e413dbbdecfa6d65406a31517c79dd6c773 introduced unconditional
+dereferencing of the keyring during verification, and so segfaults on
+NULL keyring. That can't happen within rpm itself, so we need a new
+test program to trigger it: call rpmReadPackageFile() with NULL ts.
+
+Start a new test group of API tests, we'll need to do more of these.
+I wasted an hour or two looking for a way to reproduce this by rpm or
+the python bindings when writing this tiny test-program took all of
+five minutes.
+
+Fixes: https://bugzilla.redhat.com/show_bug.cgi?id=2362996
+
+(tests/CMakeLists.txt is slightly modified from upstream to get it to
+apply)
+
+---
+ rpmio/rpmkeyring.cc   | 32 +++++++++++++++++---------------
+ tests/CMakeLists.txt  |  5 +++--
+ tests/readpkgnullts.c | 18 ++++++++++++++++++
+ tests/rpmapi.at       | 13 +++++++++++++
+ 4 files changed, 51 insertions(+), 17 deletions(-)
+ create mode 100644 tests/readpkgnullts.c
+ create mode 100644 tests/rpmapi.at
+
+diff --git a/rpmio/rpmkeyring.cc b/rpmio/rpmkeyring.cc
+index 7edbf83a7..4853d045c 100644
+--- a/rpmio/rpmkeyring.cc
++++ b/rpmio/rpmkeyring.cc
+@@ -429,27 +429,29 @@ rpmRC rpmKeyringVerifySig2(rpmKeyring keyring, pgpDigParams sig, DIGEST_CTX ctx,
+     rpmPubkey key = NULL;
+ 
+     if (sig && ctx) {
+-	rdlock lock(keyring->mutex);
+-	auto keyid = key2str(pgpDigParamsSignID(sig));
+ 	std::vector<std::pair<int, std::string>> results = {};
++	if (keyring) {
++	    auto keyid = key2str(pgpDigParamsSignID(sig));
++	    rdlock lock(keyring->mutex);
+ 
+-	/* Look for verifying key */
+-	auto range = keyring->keys.equal_range(keyid);
++	    /* Look for verifying key */
++	    auto range = keyring->keys.equal_range(keyid);
+ 
+-	for (auto it = range.first; it != range.second; ++it) {
+-	    key = it->second;
++	    for (auto it = range.first; it != range.second; ++it) {
++		key = it->second;
+ 
+-	    /* Do the parameters match the signature? */
+-	    if (pgpDigParamsAlgo(sig, PGPVAL_PUBKEYALGO)
+-		!= pgpDigParamsAlgo(key->pgpkey, PGPVAL_PUBKEYALGO))
+-	    {
+-		continue;
+-	    }
++		/* Do the parameters match the signature? */
++		if (pgpDigParamsAlgo(sig, PGPVAL_PUBKEYALGO)
++		    != pgpDigParamsAlgo(key->pgpkey, PGPVAL_PUBKEYALGO))
++		{
++		    continue;
++		}
+ 
+-	    rc = pubKeyVerify(key, sig, ctx, results);
++		rc = pubKeyVerify(key, sig, ctx, results);
+ 
+-	    if (rc == RPMRC_OK)
+-		break;
++		if (rc == RPMRC_OK)
++		    break;
++	    }
+ 	}
+ 
+ 	/* No key, sanity check signature*/
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 3c0066f46..bef9c8bd2 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -28,6 +28,7 @@ set(TESTSUITE_AT
+ 	rpmgeneral.at
+ 	rpmvercmp.at
+ 	rpmmacro.at
++	rpmapi.at
+ 	rpmdevel.at
+ 	rpmpython.at
+ 	rpmdepmatch.at
+@@ -61,10 +62,10 @@ foreach(at ${TESTSUITE_AT})
+ 	FILE(APPEND ${CMAKE_CURRENT_BINARY_DIR}/rpmtests.at "m4_include([${at}])\n")
+ endforeach()
+ 
+-set(TESTPROGS rpmpgpcheck rpmpgppubkeyfingerprint)
++set(TESTPROGS rpmpgpcheck rpmpgppubkeyfingerprint readpkgnullts)
+ foreach(prg ${TESTPROGS})
+ 	add_executable(${prg} EXCLUDE_FROM_ALL ${prg}.c)
+-	target_link_libraries(${prg} PRIVATE librpmio)
++	target_link_libraries(${prg} PRIVATE librpm)
+ endforeach()
+ string(REPLACE ";" " " TESTPROG_NAMES "${TESTPROGS}")
+ 
+diff --git a/tests/readpkgnullts.c b/tests/readpkgnullts.c
+new file mode 100644
+index 000000000..37c464eda
+--- /dev/null
++++ b/tests/readpkgnullts.c
+@@ -0,0 +1,18 @@
++#include <stdio.h>
++#include <rpm/rpmlib.h>
++
++int main(int argc, char *argv[])
++{
++    Header h = NULL;
++    FD_t fd = Fopen(argv[1], "r");
++    int rc = rpmReadPackageFile(NULL, fd, argv[1], &h);
++    if (h != NULL) {
++	char *nevra = headerGetAsString(h, RPMTAG_NEVRA);
++	printf("%s\n", nevra);
++	free(nevra);
++    }
++
++    Fclose(fd);
++    headerFree(h);
++    return rc;
++}
+diff --git a/tests/rpmapi.at b/tests/rpmapi.at
+new file mode 100644
+index 000000000..d8fe1c840
+--- /dev/null
++++ b/tests/rpmapi.at
+@@ -0,0 +1,13 @@
++AT_BANNER([RPM API tests])
++
++RPMTEST_SETUP([[rpmReadPackage() with NULL ts]])
++AT_KEYWORDS([[api signature]])
++RPMTEST_CHECK([[
++readpkgnullts /data/RPMS/hello-2.0-1.x86_64-signed.rpm
++]],
++[4],
++[hello-2.0-1.x86_64
++],
++[warning: /data/RPMS/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
++])
++RPMTEST_CLEANUP
+-- 
+2.49.0
+
