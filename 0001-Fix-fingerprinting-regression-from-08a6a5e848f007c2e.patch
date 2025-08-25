@@ -1,0 +1,115 @@
+From ac944c1e1420f1cf0905dee02fe9d84dbfcc4ecf Mon Sep 17 00:00:00 2001
+Message-ID: <ac944c1e1420f1cf0905dee02fe9d84dbfcc4ecf.1756121756.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Thu, 14 Aug 2025 13:12:55 +0300
+Subject: [PATCH] Fix fingerprinting regression from
+ 08a6a5e848f007c2e8d83fc1df8712d1a43229f4
+
+Commit 08a6a5e848f007c2e8d83fc1df8712d1a43229f4 is rather botched, was
+a bit too eager to get rid of the trusty old rpmhash implementation.
+
+First, we need a multimap for this task as there can be several packaged
+file entries sharing a fingerprint. Secondly, the code handling overlapped
+files relies on the entries being in the order they were added,
+whereas STL unordered map does not promise any particular iteration order.
+
+As it happens, a regular map does have that guarantee since C++11.
+It also happens to be somewhat less code since we no longer need separate
+hash and comparison functions. Drop the failure expectation from the
+testcase.
+
+There's a slight performance penalty compared to the original rpmhash
+implementation but not by orders of magnitude, so we don't care just now.
+The fingerprinting and file disposition code had been tightly knit together
+over the course of almost three decades, that'll take some unwrapping
+before we can compete.
+
+Fixes: #3762
+---
+ lib/fprint.cc | 46 +++++++++++++---------------------------------
+ tests/rpme.at |  1 -
+ 2 files changed, 13 insertions(+), 34 deletions(-)
+
+diff --git a/lib/fprint.cc b/lib/fprint.cc
+index 436d607f7..d97976728 100644
+--- a/lib/fprint.cc
++++ b/lib/fprint.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "system.h"
+ 
++#include <map>
+ #include <unordered_map>
+ 
+ #include <rpm/rpmfileutil.h>	/* for rpmCleanPath */
+@@ -19,13 +20,6 @@
+ #include "debug.h"
+ #include <libgen.h>
+ 
+-
+-static unsigned int sidHash(rpmsid sid)
+-{
+-    return sid;
+-}
+-
+-
+ /**
+  * Finger print cache entry.
+  * This is really a directory and symlink cache. We don't differentiate between
+@@ -58,41 +52,27 @@ struct fingerPrint {
+ 	    ((a).subDirId == (b).subDirId) \
+     )
+ 
+-/* Hash value for a finger print pointer, based on dev and inode only! */
+-struct fpHash
+-{
+-    size_t operator() (const fingerPrint *fp) const
+-    {
+-	unsigned int hash = 0;
+-	int j;
+-
+-	hash = sidHash(fp->baseNameId);
+-	if (fp->subDirId) hash ^= sidHash(fp->subDirId);
+-
+-	hash ^= ((unsigned)fp->entry->dev);
+-	for (j=0; j<4; j++) hash ^= ((fp->entry->ino >> (8*j)) & 0xFF) << ((3-j)*8);
+-
+-	return hash;
+-    }
+-};
+-
+-struct fpEqual
++struct fpLess
+ {
+     bool operator()(const fingerPrint * k1, const fingerPrint * k2) const
+     {
+-	/* If the addresses are the same, so are the values. */
++	/* An item cannot be less than itself */
+ 	if (k1 == k2)
+-	    return true;
++	    return false;
+ 
+-	/* Otherwise, compare fingerprints by value. */
+-	if (FP_EQUAL(*k1, *k2))
+-	    return true;
+-	return false;
++	if (FP_ENTRY_EQUAL(k1->entry, k2->entry)) {
++	    if (k1->subDirId == k2->subDirId)
++		return k1->baseNameId < k2->baseNameId;
++	    return k1->subDirId < k2->subDirId;
++	}
++	if (k1->entry->dev == k2->entry->dev)
++	    return k1->entry->ino < k2->entry->ino;
++	return k1->entry->dev < k2->entry->dev;
+     }
+ };
+ 
+ using rpmFpEntryHash = std::unordered_multimap<rpmsid,fprintCacheEntry_s>;
+-using rpmFpHash = std::unordered_map<fingerPrint *,rpmffi_s,fpHash,fpEqual>;
++using rpmFpHash = std::multimap<fingerPrint *,rpmffi_s,fpLess>;
+ 
+ /**
+  * Finger print cache.
+-- 
+2.51.0
+
