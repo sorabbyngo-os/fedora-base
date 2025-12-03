@@ -24,7 +24,7 @@
 
 %global rpmver 6.0.0
 #global snapver rc1
-%global baserelease 2
+%global baserelease 1
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -113,6 +113,8 @@ rpm-4.9.90-no-man-dirs.patch
 
 # Use systemd-sysusers due to https://github.com/shadow-maint/shadow/issues/940
 rpm-4.20-sysusers.patch
+# Back out of enforcing signature checking until the infra is updated
+rpm-6.0-vfylevel.patch
 # Back out to v4 package format by default until the infra is updated
 rpm-6.0-rpmformat.patch
 
@@ -622,10 +624,6 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
-* Wed Dec 03 2025 Panu Matilainen <pmatilai@redhat.com> - 6.0.0-2
-- Enable enforcing signature checking by default:
-  https://fedoraproject.org/wiki/Changes/Enforcing_signature_checking_by_default
-
 * Mon Sep 22 2025 Panu Matilainen <pmatilai@redhat.com> - 6.0.0-1
 - Rebase to 6.0 final  (https://rpm.org/releases/6.0.0)
 
