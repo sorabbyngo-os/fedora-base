@@ -24,7 +24,7 @@
 
 %global rpmver 6.0.1
 #global snapver rc1
-%global baserelease 3
+%global baserelease 4
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -624,6 +624,9 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Wed Feb 11 2026 Tom Callaway <spot@fedoraproject.org> - 6.0.1-4
+- actually rebuild against lua 5.5.0
+
 * Tue Feb 10 2026 Tom Callaway <spot@fedoraproject.org> - 6.0.1-3
 - rebuild against lua 5.5.0
 
