@@ -1,0 +1,81 @@
+From 913450b9b7fc37166d4e51fb3359cb48995750ae Mon Sep 17 00:00:00 2001
+Message-ID: <913450b9b7fc37166d4e51fb3359cb48995750ae.1782382430.git.pmatilai@redhat.com>
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Thu, 25 Jun 2026 13:08:57 +0300
+Subject: [PATCH] Fix a dumb regression from introducing %define options
+
+Commit f2ac80b80db977f2bf0df38feaf8c176fd776085 broke some common uses
+of %define that we didn't test - we were only testing --define and
+macro files. Oops.
+
+Turns out this is just a silly thinko: just don't touch "se" at all.
+Add the missing tests as well.
+
+Fixes: #4249
+---
+ rpmio/macro.cc    |  1 -
+ tests/rpmmacro.at | 36 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/rpmio/macro.cc b/rpmio/macro.cc
+index fe2282cf0..97330cda6 100644
+--- a/rpmio/macro.cc
++++ b/rpmio/macro.cc
+@@ -637,7 +637,6 @@ doDefine(rpmMacroBuf mb, const std::string & str, int level,
+ 	} else {
+ 	    handleopts = 0;
+ 	}
+-	se = s;
+     }
+ 
+     /* Copy name */
+diff --git a/tests/rpmmacro.at b/tests/rpmmacro.at
+index fb88567cd..dc08ee327 100644
+--- a/tests/rpmmacro.at
++++ b/tests/rpmmacro.at
+@@ -1849,6 +1849,42 @@ rpm --eval "%define - xx yy"
+ [],
+ [error: %define: no option after -
+ ])
++
++RPMTEST_CHECK([
++rpm --eval "%define xx() yy" --eval "%xx"
++],
++[0],
++[yy
++],
++[])
++
++RPMTEST_CHECK([
++rpm \
++	--define "mypath /bar" \
++	--eval "%define -e xx(abc:) %mypath" \
++	--eval "%xx -a -b -c1" \
++	--eval "%define mypath /foo" \
++	--eval "%xx"
++],
++[0],
++[/bar
++/bar
++],
++[])
++RPMTEST_CHECK([
++rpm \
++	--define "mypath /bar" \
++	--eval "%define -g xx<o> %mypath" \
++	--eval "%xx" \
++	--eval "%define mypath /foo" \
++	--eval "%xx"
++],
++[0],
++[/bar
++/bar
++],
++[])
++
+ RPMTEST_CLEANUP
+ 
+ RPMTEST_SETUP([error macro return])
+-- 
+2.54.0
+
