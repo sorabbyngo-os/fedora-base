@@ -1,0 +1,16 @@
+#!/bin/bash
+set -xeuo pipefail
+
+# Right now the `systemctl preset-all` runs via a postprocess in
+# minimal/systemd-presets.yaml but the preset for the timer is only
+# set up in a postprocess in standard/systemd-presets.yaml.
+#
+# This test ensures that the ordering works out such that the preset
+# from standard got applied.
+#
+# Verify if the preset file exists (only on standard) that the timer
+# is enabled. Right now the `s
+if [ -f /usr/lib/systemd/system-preset/86-bootc-standard.preset ]; then
+    # Will return success (0) if enabled or failure (1) if not
+    systemctl is-enabled bootc-fetch-apply-updates.timer
+fi
