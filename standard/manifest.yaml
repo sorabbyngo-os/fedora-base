@@ -9,13 +9,13 @@ recommends: true
 
 include:
   - ../minimal-plus/manifest.yaml
-  - autoupdates.yaml
   - networking-tools.yaml
   - system-configuration.yaml
   - coreos-user-experience.yaml
   - persistent-journal.yaml
   - initramfs-full.yaml
   - generic-growfs.yaml
+  - systemd-presets.yaml
 
 packages:
   # Include and set the default editor
