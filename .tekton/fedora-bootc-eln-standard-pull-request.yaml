@@ -53,7 +53,7 @@ spec:
     value: true
   - name: build-args
     value:
-    - REPOS_IMAGE=quay.io/bootc-devel/fedora-bootc-eln-compose:Fedora-eln-20261004.n.0@sha256:7be5159cb347994be39f36c335e5f92096c0cf3b5b990742b72158c7ca69f3cb
+    - REPOS_IMAGE=quay.io/bootc-devel/fedora-bootc-eln-compose:Fedora-eln-20261005.n.0@sha256:6f9b7c372f4fd9c5a89c93fe30c0a355c308af83e94a8b02d621f7814c0fa03f
     - MANIFEST=fedora-eln
   - name: image-expires-after
     value: 5d
