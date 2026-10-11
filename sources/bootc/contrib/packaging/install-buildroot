@@ -1,0 +1,32 @@
+#!/bin/bash
+# Install buildroot requirements for Fedora derivatives
+set -xeuo pipefail
+cd $(dirname $0)
+. /usr/lib/os-release
+case "${ID}${ID_LIKE:-}" in
+  *centos*|*rhel*)
+    # We'll use crb at build time
+    dnf config-manager --set-enabled crb
+    ;;
+esac
+# Deal with dnf4 vs dnf5
+if test -x /usr/bin/dnf5; then
+  dnf -y install 'dnf5-command(builddep)'
+else
+  dnf -y install 'dnf-command(builddep)'
+fi
+# Handle version skew in packages already installed in the base image,
+# xref https://gitlab.com/redhat/centos-stream/containers/bootc/-/issues/1174
+sync_packages=()
+for package in ostree{,-libs} systemd; do
+  if rpm -q --quiet "$package"; then
+    sync_packages+=("$package")
+  fi
+done
+if test "${#sync_packages[@]}" -gt 0; then
+  dnf -y distro-sync "${sync_packages[@]}"
+fi
+# Install base build requirements
+dnf -y builddep bootc.spec
+# And extra packages
+grep -Ev -e '^#' fedora-extra.txt | xargs dnf -y install

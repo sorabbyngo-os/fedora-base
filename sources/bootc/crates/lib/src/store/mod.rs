@@ -1,0 +1,1016 @@
+//! The [`Storage`] type holds references to three different types of
+//! storage that together implement the unified storage model.
+//!
+//! # Planned three-store architecture
+//!
+//! The planned architecture for unified storage involves three content stores that
+//! share physical disk blocks on a reflink-capable filesystem (XFS, btrfs):
+//!
+//! 1. **bootc-owned containers-storage** at `/sysroot/ostree/bootc/storage`
+//!    (overlay driver) — the image is accessible to podman and shares layers
+//!    with Logically Bound Images.
+//! 2. **composefs object store** at `/sysroot/composefs/objects/`
+//!    (SHA-512 content-addressed) — used by composefs-boot to mount the
+//!    rootfs as EROFS.  Populated from containers-storage via `FICLONE`
+//!    (`composefs_oci::pull` with `ZeroCopy`).
+//! 3. **ostree bare repo** at `/sysroot/ostree/repo/objects/`
+//!    (SHA-256 content-addressed) — provides deployment, rollback, fsck, and
+//!    delta updates.  Populated from the composefs object store via `FICLONE`
+//!    (`import_from_composefs_repo`).
+//!
+//! Each `FICLONE` ioctl lets the kernel mark source and destination extents as
+//! copy-on-write siblings with no userspace data movement. On ext4 (no
+//! reflinks), each step falls back to a byte copy.
+//!
+//! ## Implementation Plan
+//!
+//! The containers-storage → composefs step (arrow 1) is already implemented
+//! for the composefs boot backend in `crates/lib/src/bootc_composefs/repo.rs`
+//! via `pull_composefs_unified`.
+//!
+//! Wiring all three steps together for the ostree backend is the major planned work.
+//! The composefs → ostree step (arrow 2) was proven by the `composefs-to-ostree`
+//! spike branch. The planned implementation for the ostree backend will:
+//!
+//! 1. Perform a lazy cached probe (`reflinks_supported`) at install time.
+//! 2. Pull into containers-storage first (Stage 1).
+//! 3. Use `composefs_oci::pull` with `LocalFetchOpt::ZeroCopy` to populate composefs (Stage 2).
+//! 4. Finally, synthesize the ostree commit by walking the composefs tree,
+//!    reading metadata, computing SELinux labels, computing the ostree checksum,
+//!    and `FICLONE`ing into the ostree bare repo (Stage 3).
+//!
+//! ## Long-term: Global composefs store
+//!
+//! The ultimate planned state (the "composefs-as-storage" plan) is to have podman's
+//! composefs backend natively write objects to `/sysroot/composefs` directly, bypassing
+//! even `containers-storage`. This would mean flatpak, podman, and bootc all share exactly
+//! one global pool of content-addressed, deduplicated files.
+//!
+//! ## Why composefs in the middle
+//!
+//! The old unified storage path (containers-storage → skopeo tar → ostree)
+//! serialized layers twice. composefs-ctl's `ZeroCopy` pull mode instead walks
+//! the overlay `diff/` directories and FICLONEs each file into the composefs
+//! object store keyed by SHA-512 fsverity digest — no tar involved.
+//! See [container-libs#144](https://github.com/containers/container-libs/issues/144).
+//!
+//! ## Why reflink and not hardlink between composefs and ostree
+//!
+//! composefs is content-addressed by SHA-512 of raw bytes: two paths with
+//! identical content share one composefs inode. ostree bare mode stores
+//! uid/gid/mode/xattrs including `security.selinux` on each inode. Two files
+//! with the same bytes but different SELinux labels produce different ostree
+//! checksums but share one composefs object. One inode can hold only one
+//! `security.selinux` value, so hardlinking would silently corrupt labels.
+//! Reflink gives each ostree object its own inode while sharing disk extents.
+//!
+//! ## Reflink probe
+//!
+//! The reflink probe is performed lazily and cached. It creates
+//! two anonymous temporary files (via `O_TMPFILE`, no
+//! cleanup needed), writes one byte to the source, and attempts
+//! `ioctl(FICLONE)`. Returns `true` on success, `false` on `EOPNOTSUPP` or
+//! `EXDEV`. The probe directory is `composefs/objects` if it already exists,
+//! otherwise the physical root itself.
+//!
+//! # OSTree
+//!
+//! The default backend for the bootable container store; this
+//! lives in `/ostree` in the physical root.
+//!
+//! # containers-storage:
+//!
+//! Later, bootc gained support for Logically Bound Images.
+//! On ostree systems this is a `containers-storage:` instance that
+//! lives in `/ostree/bootc/storage`.  On composefs systems the
+//! physical location is `/composefs/bootc/storage` with a compat
+//! symlink at `ostree/bootc -> ../composefs/bootc`.
+//!
+//! # composefs
+//!
+//! This lives in `/composefs` in the physical root.
+
+use std::cell::OnceCell;
+use std::ops::Deref;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use bootc_mount::tempmount::TempMount;
+use bootc_mount::{Filesystem, run_findmnt};
+use camino::{Utf8Path, Utf8PathBuf};
+use cap_std_ext::cap_std;
+use cap_std_ext::cap_std::fs::{
+    Dir, DirBuilder, DirBuilderExt as _, Permissions, PermissionsExt as _,
+};
+use cap_std_ext::dirext::CapStdExtDirExt;
+use fn_error_context::context;
+
+use ocidir::cap_std::ambient_authority;
+use ostree_ext::container_utils::ostree_booted;
+use ostree_ext::prelude::FileExt;
+use ostree_ext::sysroot::SysrootLock;
+use ostree_ext::{gio, ostree};
+use rustix::{fd::AsFd, fs::Mode, fs::StatVfsMountFlags};
+
+use composefs::fsverity::Sha512HashValue;
+use composefs::repository::{RepositoryConfig, RepositoryOpenError};
+use composefs_ctl::composefs;
+
+use crate::bootc_composefs::backwards_compat::bcompat_boot::prepend_custom_prefix;
+use crate::bootc_composefs::boot::{EFI_LINUX, mount_esp_readonly, mount_esp_writable};
+use crate::bootc_composefs::status::{ComposefsCmdline, composefs_booted, get_bootloader};
+use crate::install::BOOT;
+use crate::lsm;
+use crate::podstorage::CStorage;
+use crate::spec::{BootloaderKind, ImageStatus};
+use crate::utils::{deployment_fd, open_dir_remount_rw};
+
+/// See <https://github.com/containers/composefs-rs/issues/159>
+pub type ComposefsRepository = composefs::repository::Repository<Sha512HashValue>;
+
+/// Configure new repositories to retain boot images for both supported formats.
+pub(crate) fn set_dual_erofs_formats(config: &mut RepositoryConfig) {
+    config.erofs_formats = composefs::erofs::format::FormatConfig {
+        default: composefs::erofs::format::FormatVersion::V1,
+        extra: [composefs::erofs::format::FormatVersion::V2].into(),
+    };
+}
+
+/// Path to the physical root
+pub const SYSROOT: &str = "sysroot";
+
+/// The toplevel composefs directory path
+pub const COMPOSEFS: &str = "composefs";
+
+/// The mode for the composefs directory; this is intentionally restrictive
+/// to avoid leaking information.
+pub(crate) const COMPOSEFS_MODE: Mode = Mode::from_raw_mode(0o700);
+
+/// Ensure the composefs directory exists in the given physical root
+/// with the correct permissions (mode 0700).
+pub(crate) fn ensure_composefs_dir(physical_root: &Dir) -> Result<()> {
+    let mut db = DirBuilder::new();
+    db.mode(COMPOSEFS_MODE.as_raw_mode());
+    physical_root
+        .ensure_dir_with(COMPOSEFS, &db)
+        .context("Creating composefs directory")?;
+    // Always update permissions, in case the directory pre-existed
+    // with incorrect mode (e.g. from an older version of bootc).
+    physical_root
+        .set_permissions(
+            COMPOSEFS,
+            Permissions::from_mode(COMPOSEFS_MODE.as_raw_mode()),
+        )
+        .context("Setting composefs directory permissions")?;
+    Ok(())
+}
+
+/// The path to the bootc root directory, relative to the physical
+/// system root.  On ostree systems this is a real directory; on composefs
+/// systems it is a symlink to `../composefs/bootc` (see
+/// [`ensure_composefs_bootc_link`]).
+pub(crate) const BOOTC_ROOT: &str = "ostree/bootc";
+
+/// The "real" bootc root for composefs-native systems, relative to the
+/// physical system root.
+pub(crate) const COMPOSEFS_BOOTC_ROOT: &str = "composefs/bootc";
+
+/// On a composefs install the containers-storage lives under
+/// `composefs/bootc/storage`.  To keep the rest of the code (and the
+/// `/usr/lib/bootc/storage` symlink which points through `ostree/bootc`)
+/// working, we create:
+///
+///   `ostree/bootc -> ../composefs/bootc`
+///
+/// This function is idempotent.
+pub(crate) fn ensure_composefs_bootc_link(physical_root: &Dir) -> Result<()> {
+    // Ensure the real directory exists
+    physical_root
+        .create_dir_all(COMPOSEFS_BOOTC_ROOT)
+        .with_context(|| format!("Creating {COMPOSEFS_BOOTC_ROOT}"))?;
+
+    // Create the `ostree/` parent if needed (it won't exist on a pure
+    // composefs install that never touched ostree).
+    physical_root
+        .create_dir_all("ostree")
+        .context("Creating ostree directory")?;
+
+    // If ostree/bootc already exists as a real directory (e.g. from an
+    // older install or from the ostree path), leave it alone — this
+    // function is only for fresh composefs installs.
+    match physical_root.symlink_metadata(BOOTC_ROOT) {
+        Ok(meta) if meta.is_symlink() => {
+            // Already a symlink — nothing to do
+            return Ok(());
+        }
+        Ok(_meta) => {
+            // It's a real directory.  This shouldn't happen during a fresh
+            // composefs install, but if it does just leave it.
+            tracing::warn!(
+                "{BOOTC_ROOT} already exists as a directory, not replacing with symlink"
+            );
+            return Ok(());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Good — doesn't exist yet, we'll create the symlink
+        }
+        Err(e) => return Err(e).context(format!("Querying {BOOTC_ROOT}")),
+    }
+
+    physical_root
+        .symlink_contents(format!("../{COMPOSEFS_BOOTC_ROOT}"), BOOTC_ROOT)
+        .with_context(|| format!("Creating {BOOTC_ROOT} -> ../{COMPOSEFS_BOOTC_ROOT} symlink"))?;
+
+    tracing::info!("Created {BOOTC_ROOT} -> ../{COMPOSEFS_BOOTC_ROOT}");
+    Ok(())
+}
+
+/// Storage accessor for a booted system.
+///
+/// This wraps [`Storage`] and can determine whether the system is booted
+/// via ostree or composefs, providing a unified interface for both.
+pub(crate) struct BootedStorage {
+    pub(crate) storage: Storage,
+}
+
+impl Deref for BootedStorage {
+    type Target = Storage;
+
+    fn deref(&self) -> &Self::Target {
+        &self.storage
+    }
+}
+
+/// Represents an ostree-based boot environment
+pub struct BootedOstree<'a> {
+    pub(crate) sysroot: &'a SysrootLock,
+    pub(crate) deployment: ostree::Deployment,
+}
+
+impl<'a> BootedOstree<'a> {
+    /// Get the ostree repository
+    pub(crate) fn repo(&self) -> ostree::Repo {
+        self.sysroot.repo()
+    }
+
+    /// Get the stateroot name
+    pub(crate) fn stateroot(&self) -> ostree::glib::GString {
+        self.deployment.osname()
+    }
+}
+
+/// Represents a composefs-based boot environment
+pub struct BootedComposefs {
+    pub repo: Arc<ComposefsRepository>,
+    pub cmdline: &'static ComposefsCmdline,
+}
+
+/// Discriminated union representing the boot storage backend.
+///
+/// The runtime environment in which bootc is executing.
+pub(crate) enum Environment {
+    /// System booted via ostree
+    OstreeBooted,
+    /// System booted via composefs
+    ComposefsBooted(ComposefsCmdline),
+    /// Running in a container
+    Container,
+    /// Other (not booted via bootc)
+    Other,
+}
+
+/// Whether a `BootedStorage` caller intends to write to the ESP.
+///
+/// Only meaningful for `Environment::ComposefsBooted`; ignored elsewhere.
+/// Read-only callers (e.g. `bootc status`) pass `ReadOnly` so a pre-mounted
+/// ro ESP can be cloned as-is; write callers (e.g. `bootc upgrade`) pass
+/// `ReadWrite` so a pre-mounted ro ESP is remounted rw in the private
+/// mount namespace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EspAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+impl Environment {
+    /// Detect the current runtime environment.
+    pub(crate) fn detect() -> Result<Self> {
+        if ostree_ext::container_utils::running_in_container() {
+            return Ok(Self::Container);
+        }
+
+        if let Some(cmdline) = composefs_booted()? {
+            return Ok(Self::ComposefsBooted(cmdline.clone()));
+        }
+
+        if ostree_booted()? {
+            return Ok(Self::OstreeBooted);
+        }
+
+        Ok(Self::Other)
+    }
+
+    /// Returns true if this environment requires entering a mount namespace
+    /// before loading storage (to avoid leaving /sysroot writable).
+    pub(crate) fn needs_mount_namespace(&self) -> bool {
+        matches!(self, Self::OstreeBooted | Self::ComposefsBooted(_))
+    }
+}
+
+/// A system can boot via either ostree or composefs; this enum
+/// allows code to handle both cases while maintaining type safety.
+pub(crate) enum BootedStorageKind<'a> {
+    Ostree(BootedOstree<'a>),
+    Composefs(BootedComposefs),
+}
+
+/// Open the physical root (/sysroot) and /run directories for a booted system.
+///
+/// The returned boolean is `true` if `/sysroot` is on a physically read-only
+/// medium (e.g. a live ISO) that cannot be remounted writable.
+///
+/// Note that ostree mounts `/sysroot` read-only by default even on writable
+/// systems and remounts it writable on demand, so being read-only is not by
+/// itself meaningful: we only conclude the system is read-only if a remount
+/// attempt *fails* and the backing block device confirms it.
+fn get_physical_root_and_run() -> Result<(Dir, Dir, bool)> {
+    let d = Dir::open_ambient_dir("/sysroot", cap_std::ambient_authority())
+        .context("Opening /sysroot")?;
+    let is_ro = sysroot_is_read_only(&d)?;
+    let physical_root = d.open_dir(".").context("Opening /sysroot")?;
+    let run =
+        Dir::open_ambient_dir("/run", cap_std::ambient_authority()).context("Opening /run")?;
+    Ok((physical_root, run, is_ro))
+}
+
+/// Determine whether `/sysroot` (given as `d`) is on a physically read-only
+/// block device, remounting it read-write as a side effect when necessary.
+///
+/// ostree mounts `/sysroot` read-only by default even on writable systems and
+/// remounts it writable on demand, so the read-only mount flag alone is not
+/// meaningful. The authoritative signal is the backing block device's read-only
+/// flag, which is set for a live ISO (a read-only loop device over an immutable
+/// rootfs image) and propagates from a whole disk to its partitions. We check
+/// that first and avoid even attempting a remount that is bound to fail.
+fn sysroot_is_read_only(d: &Dir) -> Result<bool> {
+    let st = rustix::fs::fstatvfs(d.as_fd())?;
+    if !st.f_flag.contains(StatVfsMountFlags::RDONLY) {
+        // Already writable: the common case.
+        return Ok(false);
+    }
+
+    // The backing block device is physically read-only (e.g. a live ISO); there
+    // is no point attempting a remount, and write operations are not possible.
+    if matches!(bootc_blockdev::is_dir_backing_device_ro(d), Ok(Some(true))) {
+        return Ok(true);
+    }
+
+    // The mount is read-only but the device is writable: this is the normal
+    // ostree case where /sysroot is mounted read-only by default. Remount it
+    // writable on demand; a failure here is an unexpected error.
+    open_dir_remount_rw(d, ".".into())?;
+    Ok(false)
+}
+
+/// Where GRUB's configuration and the BLS entries live on a booted composefs
+/// system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GrubBootLocation {
+    /// `boot` on the physical root, i.e. `/sysroot/boot`
+    PhysicalRoot,
+    /// A separate boot partition, mounted on `/boot`. It isn't mounted on
+    /// `/sysroot/boot`, which is just an empty directory then.
+    BootMount,
+}
+
+impl GrubBootLocation {
+    /// Decide from the partition type and filesystem type of the filesystem
+    /// mounted on `/boot`, and whether it has a GRUB directory.
+    fn classify(parttype: Option<&str>, fstype: &str, has_grub_dir: bool) -> Self {
+        use crate::discoverable_partition_specification as dps;
+
+        // The ESP mounted on /boot: GRUB's configuration is in /sysroot/boot
+        let is_esp = match parttype {
+            Some(p) if p.eq_ignore_ascii_case(dps::ESP) => true,
+            Some(p) if p.eq_ignore_ascii_case(dps::XBOOTLDR) => false,
+            // No (or another) DPS type, so go by the filesystem
+            _ => fstype == "vfat",
+        };
+        // Otherwise it's a boot partition (XBOOTLDR or not), which should
+        // have GRUB's configuration, but check just in case
+        if !is_esp && has_grub_dir {
+            Self::BootMount
+        } else {
+            Self::PhysicalRoot
+        }
+    }
+
+    /// The absolute path of the directory in the booted root
+    fn path(self) -> Utf8PathBuf {
+        let parent = match self {
+            Self::PhysicalRoot => "/sysroot",
+            Self::BootMount => "/",
+        };
+        Utf8Path::new(parent).join(BOOT)
+    }
+}
+
+/// Find the directory holding GRUB's configuration and the BLS entries on a
+/// booted system, returning it and its absolute path.
+///
+/// This is `/sysroot/boot`, unless there's a separate boot partition, which
+/// is mounted on `/boot`. How it gets mounted there varies: `bootc install`
+/// adds a `systemd.mount-extra` karg, but other tools may use e.g. an fstab
+/// entry instead. Everything that reads or writes GRUB's boot entries must go
+/// through this, via [`Storage::require_boot_dir`] or
+/// [`Storage::require_grub_boot_path`].
+#[context("Finding boot for Grub")]
+fn get_boot_dir_for_grub(physical_root: &Dir) -> Result<(Dir, Utf8PathBuf)> {
+    // We have this so systemd's boot.automount shouldn't expire until
+    // this function finishes execution as we have a handle to /boot
+    let boot_mount_path = GrubBootLocation::BootMount.path();
+    let boot = Dir::open_ambient_dir(&boot_mount_path, ambient_authority())
+        .with_context(|| format!("Opening {boot_mount_path}"))?;
+
+    let open = |location: GrubBootLocation| -> Result<(Dir, Utf8PathBuf)> {
+        let dir = match location {
+            GrubBootLocation::PhysicalRoot => physical_root
+                .open_dir(BOOT)
+                .context("Opening boot in physical root")?,
+            // Remount /boot if mounted RO
+            GrubBootLocation::BootMount => open_dir_remount_rw(&boot, ".".into())?,
+        };
+        Ok((dir, location.path()))
+    };
+
+    let is_boot_mntpnt = boot
+        .is_mountpoint(".")
+        .with_context(|| format!("Checking if {boot_mount_path} is a mountpoint"))?;
+
+    // /boot is not a mount point for bootloader Grub, so we have to
+    // have stuff in /sysroot/boot
+    if !matches!(is_boot_mntpnt, Some(true)) {
+        return open(GrubBootLocation::PhysicalRoot);
+    }
+
+    // /boot is a mountpoint
+    // Figure out if it's the ESP or a boot partition
+    let mnt_res = run_findmnt(&[], None, Some(boot_mount_path.as_str()))
+        .with_context(|| format!("Finding {boot_mount_path} mount info"))?;
+
+    let mut boot_mount_details: Option<Filesystem> = None;
+
+    for mount in mnt_res.filesystems {
+        if mount.source.starts_with("systemd") {
+            // systemd automount, useless for getting any info
+            continue;
+        }
+
+        if let Some(already_found) = boot_mount_details {
+            // Really shouldn't happen, but for sanity
+            anyhow::bail!(
+                "Found multiple mounts on {boot_mount_path}. Found {}, already had {}",
+                mount.source,
+                already_found.source,
+            );
+        };
+
+        boot_mount_details = Some(mount);
+    }
+
+    let boot_mount_details = boot_mount_details
+        .ok_or_else(|| anyhow::anyhow!("Failed to get mount details for {boot_mount_path}"))?;
+
+    let boot_dev_info = bootc_blockdev::list_dev(&Utf8PathBuf::from(&boot_mount_details.source))?;
+
+    open(GrubBootLocation::classify(
+        boot_dev_info.parttype.as_deref(),
+        &boot_mount_details.fstype,
+        boot.is_dir("grub2"),
+    ))
+}
+
+impl BootedStorage {
+    /// Create a new booted storage accessor for the given environment.
+    ///
+    /// The caller must have already called `prepare_for_write()` if
+    /// `env.needs_mount_namespace()` is true. `esp_access` selects how the
+    /// ESP mount is acquired on composefs systems (see [`EspAccess`]).
+    pub(crate) async fn new(env: Environment, esp_access: EspAccess) -> Result<Option<Self>> {
+        let r = match &env {
+            Environment::ComposefsBooted(cmdline) => {
+                let (physical_root, run, is_ro) = get_physical_root_and_run()?;
+                let mut composefs = ComposefsRepository::open_path(&physical_root, COMPOSEFS)?;
+                if cmdline.allow_missing_fsverity {
+                    composefs.set_insecure();
+                }
+                let composefs = Arc::new(composefs);
+
+                // Locate ESP by walking up to the root disk(s). Both mount
+                // variants transparently reuse an already-mounted ESP when
+                // present (e.g. auto-mounted at /boot ro via
+                // `systemd.mount-extra` in the deployment cmdline).
+                let root_dev = bootc_blockdev::list_dev_by_dir(&physical_root)?;
+                let esp_dev = root_dev.find_first_colocated_esp()?;
+                let esp_path = esp_dev.path();
+                let esp_mount = match esp_access {
+                    EspAccess::ReadOnly => mount_esp_readonly(&esp_path)?,
+                    EspAccess::ReadWrite => mount_esp_writable(&esp_path)?,
+                };
+
+                let (boot_dir, grub_boot_path) = match get_bootloader()?.kind()? {
+                    // We can have a separate /boot and not /sysroot/boot
+                    BootloaderKind::GRUBClassic => {
+                        let (dir, path) = get_boot_dir_for_grub(&physical_root)?;
+                        (dir, Some(path))
+                    }
+                    // NOTE: Handle XBOOTLDR partitions here if and when we use it
+                    BootloaderKind::BLSCompatible => {
+                        (esp_mount.fd.try_clone().context("Cloning fd")?, None)
+                    }
+                };
+
+                let storage = Storage {
+                    physical_root,
+                    physical_root_path: Utf8PathBuf::from("/sysroot"),
+                    is_ro,
+                    run,
+                    boot_dir: Some(boot_dir),
+                    grub_boot_path,
+                    esp: Some(esp_mount),
+                    ostree: Default::default(),
+                    composefs: OnceCell::from(composefs.clone()),
+                    imgstore: Default::default(),
+                };
+
+                // prepend_custom_prefix is idempotent: it checks has_prefix on each
+                // entry and skips any that already have it, so it's safe to call on
+                // every boot. This handles upgrades from older bootc versions that
+                // lacked the prefix — we can't use meta.json presence as a trigger
+                // because open_upgrade() in the initramfs writes meta.json before
+                // userspace ever runs.
+                let cmdline = composefs_booted()?
+                    .ok_or_else(|| anyhow::anyhow!("Could not get booted composefs cmdline"))?;
+                prepend_custom_prefix(&storage, &cmdline).await?;
+
+                Some(Self { storage })
+            }
+            Environment::OstreeBooted => {
+                // The caller must have entered a private mount namespace before
+                // calling this function. This is because ostree's sysroot.load() will
+                // remount /sysroot as writable, and we call set_mount_namespace_in_use()
+                // to indicate we're in a mount namespace. Without actually being in a
+                // mount namespace, this would leave the global /sysroot writable.
+                let (physical_root, run, is_ro) = get_physical_root_and_run()?;
+
+                let sysroot = ostree::Sysroot::new_default();
+                // On a read-only sysroot (e.g. a live ISO) we must NOT mark the mount
+                // namespace as in-use, otherwise ostree will attempt to remount /sysroot
+                // read-write on write operations and fail. We also avoid taking the write
+                // lock (which would write a lockfile to the read-only filesystem).
+                let sysroot = if is_ro {
+                    ostree_ext::sysroot::SysrootLock::from_assumed_locked(&sysroot)
+                } else {
+                    sysroot.set_mount_namespace_in_use();
+                    ostree_ext::sysroot::SysrootLock::new_from_sysroot(&sysroot).await?
+                };
+                sysroot.load(gio::Cancellable::NONE)?;
+
+                let storage = Storage {
+                    physical_root,
+                    physical_root_path: Utf8PathBuf::from("/sysroot"),
+                    is_ro,
+                    run,
+                    boot_dir: None,
+                    grub_boot_path: None,
+                    esp: None,
+                    ostree: OnceCell::from(sysroot),
+                    composefs: Default::default(),
+                    imgstore: Default::default(),
+                };
+
+                Some(Self { storage })
+            }
+            // For container or non-bootc environments, there's no storage
+            Environment::Container | Environment::Other => None,
+        };
+        Ok(r)
+    }
+
+    /// Determine the boot storage backend kind.
+    ///
+    /// Returns information about whether the system booted via ostree or composefs,
+    /// along with the relevant sysroot/deployment or repository/cmdline data.
+    pub(crate) fn kind(&self) -> Result<BootedStorageKind<'_>> {
+        if let Some(cmdline) = composefs_booted()? {
+            // SAFETY: This must have been set above in new()
+            let repo = self.composefs.get().unwrap();
+            Ok(BootedStorageKind::Composefs(BootedComposefs {
+                repo: Arc::clone(repo),
+                cmdline,
+            }))
+        } else {
+            // SAFETY: This must have been set above in new()
+            let sysroot = self.ostree.get().unwrap();
+            let deployment = sysroot.require_booted_deployment()?;
+            Ok(BootedStorageKind::Ostree(BootedOstree {
+                sysroot,
+                deployment,
+            }))
+        }
+    }
+}
+
+/// A reference to a physical filesystem root, plus
+/// accessors for the different types of container storage.
+pub(crate) struct Storage {
+    /// Directory holding the physical root
+    pub physical_root: Dir,
+
+    /// Absolute path to the physical root directory.
+    /// This is `/sysroot` on a running system, or the target mount point during install.
+    pub physical_root_path: Utf8PathBuf,
+
+    /// True if the physical root (`/sysroot`) is on a physically read-only
+    /// block device (e.g. a live ISO) and cannot be made writable.
+    pub(crate) is_ro: bool,
+
+    /// The 'boot' directory, useful and `Some` only for composefs systems
+    /// For grub booted systems, this points to `/sysroot/boot`, or to `/boot`
+    /// if that's a separate boot partition
+    /// For systemd booted systems, this points to the ESP
+    pub boot_dir: Option<Dir>,
+
+    /// The absolute path of `boot_dir` on composefs systems booted with grub
+    grub_boot_path: Option<Utf8PathBuf>,
+
+    /// The ESP mounted at a tmp location
+    pub esp: Option<TempMount>,
+
+    /// Our runtime state
+    run: Dir,
+
+    /// The OSTree storage
+    ostree: OnceCell<SysrootLock>,
+    /// The composefs storage
+    composefs: OnceCell<Arc<ComposefsRepository>>,
+    /// The containers-image storage used for LBIs
+    imgstore: OnceCell<CStorage>,
+}
+
+/// Cached image status data used for optimization.
+///
+/// This stores the current image status and any cached update information
+/// to avoid redundant fetches during status operations.
+#[derive(Default)]
+pub(crate) struct CachedImageStatus {
+    pub image: Option<ImageStatus>,
+    pub cached_update: Option<ImageStatus>,
+}
+
+impl Storage {
+    /// Create a new storage accessor from an existing ostree sysroot.
+    ///
+    /// This is used for non-booted scenarios (e.g., `bootc install`) where
+    /// we're operating on a target filesystem rather than the running system.
+    pub fn new_ostree(sysroot: SysrootLock, run: &Dir) -> Result<Self> {
+        let run = run.try_clone()?;
+
+        // ostree has historically always relied on
+        // having ostree -> sysroot/ostree as a symlink in the image to
+        // make it so that code doesn't need to distinguish between booted
+        // vs offline target. The ostree code all just looks at the ostree/
+        // directory, and will follow the link in the booted case.
+        //
+        // For composefs we aren't going to do a similar thing, so here
+        // we need to explicitly distinguish the two and the storage
+        // here hence holds a reference to the physical root.
+        let ostree_sysroot_dir = crate::utils::sysroot_dir(&sysroot)?;
+        let (physical_root, physical_root_path) = if sysroot.is_booted() {
+            (
+                ostree_sysroot_dir.open_dir(SYSROOT)?,
+                Utf8PathBuf::from("/sysroot"),
+            )
+        } else {
+            // For non-booted case (install), get the path from the sysroot
+            let path = sysroot.path();
+            let path_str = path.parse_name().to_string();
+            let path = Utf8PathBuf::from(path_str);
+            (ostree_sysroot_dir, path)
+        };
+
+        let ostree_cell = OnceCell::new();
+        let _ = ostree_cell.set(sysroot);
+
+        Ok(Self {
+            physical_root,
+            physical_root_path,
+            is_ro: false,
+            run,
+            boot_dir: None,
+            grub_boot_path: None,
+            esp: None,
+            ostree: ostree_cell,
+            composefs: Default::default(),
+            imgstore: Default::default(),
+        })
+    }
+
+    /// Ensure the storage is writable, erroring with a clear message if the
+    /// underlying `/sysroot` is on a read-only block device (e.g. a live ISO).
+    pub(crate) fn require_writable(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_ro,
+            "Cannot perform this operation: /sysroot is on a read-only block device (e.g. a live ISO)"
+        );
+        Ok(())
+    }
+
+    /// Returns `boot_dir` if it exists
+    pub(crate) fn require_boot_dir(&self) -> Result<&Dir> {
+        self.boot_dir
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Boot dir not found"))
+    }
+
+    /// Returns the absolute path of `boot_dir` on a composefs system booted
+    /// with grub, for code that works with paths rather than directory fds:
+    /// `/boot` if it's a separate boot partition, `/sysroot/boot` otherwise
+    pub(crate) fn require_grub_boot_path(&self) -> Result<&Utf8Path> {
+        self.grub_boot_path
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Grub boot path not found"))
+    }
+
+    /// Returns the mounted `esp` if it exists
+    pub(crate) fn require_esp(&self) -> Result<&TempMount> {
+        self.esp
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("ESP not found"))
+    }
+
+    /// Returns the Directory where the Type1 boot binaries are stored
+    /// The grub boot directory (see `require_boot_dir`) for Grub, and ESP/EFI/Linux for systemd-boot
+    pub(crate) fn bls_boot_binaries_dir(&self) -> Result<Dir> {
+        let boot_dir = self.require_boot_dir()?;
+
+        // boot dir in case of systemd-boot points to the ESP, but we store
+        // the actual binaries inside ESP/EFI/Linux
+        let boot_dir = match get_bootloader()?.kind()? {
+            BootloaderKind::GRUBClassic => boot_dir.try_clone()?,
+            BootloaderKind::BLSCompatible => {
+                let boot_dir = boot_dir
+                    .open_dir(EFI_LINUX)
+                    .with_context(|| format!("Opening {EFI_LINUX}"))?;
+
+                boot_dir
+            }
+        };
+
+        Ok(boot_dir)
+    }
+
+    /// Access the underlying ostree repository
+    pub(crate) fn get_ostree(&self) -> Result<&SysrootLock> {
+        self.ostree
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("OSTree storage not initialized"))
+    }
+
+    /// Get a cloned reference to the ostree sysroot.
+    ///
+    /// This is used when code needs an owned `ostree::Sysroot` rather than
+    /// a reference to the `SysrootLock`.
+    pub(crate) fn get_ostree_cloned(&self) -> Result<ostree::Sysroot> {
+        let r = self.get_ostree()?;
+        Ok((*r).clone())
+    }
+
+    /// Access the image storage; will automatically initialize it if necessary.
+    ///
+    /// Works on both ostree and composefs-only systems.  On ostree the
+    /// SELinux policy is loaded from the booted deployment; on composefs
+    /// (where ostree isn't initialized) we fall back to the host root policy.
+    pub(crate) fn get_ensure_imgstore(&self) -> Result<&CStorage> {
+        if let Some(imgstore) = self.imgstore.get() {
+            return Ok(imgstore);
+        }
+
+        let (sysroot_dir, sepolicy) = if let Ok(ostree) = self.get_ostree() {
+            let sysroot_dir = crate::utils::sysroot_dir(ostree)?;
+            let sepolicy = if ostree.booted_deployment().is_none() {
+                tracing::trace!("falling back to container root's selinux policy");
+                let container_root = Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+                lsm::new_sepolicy_at(&container_root)?
+            } else {
+                tracing::trace!("loading sepolicy from booted ostree deployment");
+                let dep = ostree.booted_deployment().unwrap();
+                let dep_fs = deployment_fd(ostree, &dep)?;
+                lsm::new_sepolicy_at(&dep_fs)?
+            };
+            (sysroot_dir, sepolicy)
+        } else {
+            // Composefs-only: ostree is not initialized. Use the physical
+            // root directly and load SELinux policy from the host root.
+            let sysroot_dir = self.physical_root.try_clone()?;
+            let root = Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+            let sepolicy = lsm::new_sepolicy_at(&root)?;
+            (sysroot_dir, sepolicy)
+        };
+
+        tracing::trace!("sepolicy in get_ensure_imgstore: {sepolicy:?}");
+
+        let imgstore = CStorage::create(&sysroot_dir, &self.run, sepolicy.as_ref())?;
+        Ok(self.imgstore.get_or_init(|| imgstore))
+    }
+
+    /// Ensure the image storage is properly SELinux-labeled. This should be
+    /// called after all image pulls are complete.
+    pub(crate) fn ensure_imgstore_labeled(&self) -> Result<()> {
+        if let Some(imgstore) = self.imgstore.get() {
+            imgstore.ensure_labeled()?;
+        }
+        Ok(())
+    }
+
+    /// Access the composefs repository; will automatically initialize it if necessary.
+    ///
+    /// This lazily opens the composefs repository, creating the directory if needed
+    /// and bootstrapping verity settings from the ostree configuration.
+    ///
+    /// If the repository already exists on disk, it is opened as-is, preserving
+    /// whatever EROFS format version it was created with (e.g. V2 from an older
+    /// composefs-rs).  A fresh repository is only initialized when no `meta.json`
+    /// is found, using the current default format version from composefs-rs.
+    pub(crate) fn get_ensure_composefs(&self) -> Result<Arc<ComposefsRepository>> {
+        if let Some(composefs) = self.composefs.get() {
+            return Ok(Arc::clone(composefs));
+        }
+
+        ensure_composefs_dir(&self.physical_root)?;
+
+        // Bootstrap verity off of the ostree state. In practice this means disabled by
+        // default right now.
+        let ostree = self.get_ostree()?;
+        let ostree_repo = &ostree.repo();
+        let ostree_verity = ostree_ext::fsverity::is_verity_enabled(ostree_repo)?;
+
+        // First, try to open an existing repository.  This respects whatever
+        // EROFS format version (V1 or V2) was persisted in meta.json, avoiding
+        // the "already initialized with different configuration" error that
+        // occurs when the composefs-rs default format version changes between
+        // bootc builds (e.g. V2 → V1 after composefs-rs PR #330).
+        let composefs_dir = self.physical_root.open_dir(COMPOSEFS)?;
+        let composefs = match ComposefsRepository::open_path(&composefs_dir, ".") {
+            Ok(mut repo) => {
+                if !ostree_verity.enabled {
+                    repo.set_insecure();
+                }
+                repo
+            }
+            Err(RepositoryOpenError::MetadataMissing) => {
+                // No meta.json — this is a fresh directory.  Existing repositories
+                // above retain their recorded format configuration.
+                let mut config = RepositoryConfig::new(composefs::fsverity::Algorithm::SHA512);
+                set_dual_erofs_formats(&mut config);
+                let config = if ostree_verity.enabled {
+                    config
+                } else {
+                    config.set_insecure()
+                };
+                let (repo, _created) = ComposefsRepository::init_path(composefs_dir, ".", config)?;
+                repo
+            }
+            Err(RepositoryOpenError::OldFormatRepository) => {
+                // Pre-meta.json repository — use the upgrade path that infers
+                // the algorithm and writes meta.json.
+                let (mut repo, _upgraded) = ComposefsRepository::open_upgrade(&composefs_dir, ".")?;
+                if !ostree_verity.enabled {
+                    repo.set_insecure();
+                }
+                repo
+            }
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context("Opening composefs repository"));
+            }
+        };
+        let composefs = Arc::new(composefs);
+        let r = Arc::clone(self.composefs.get_or_init(|| composefs));
+        Ok(r)
+    }
+
+    /// Update the mtime on the storage root directory.
+    ///
+    /// This touches `ostree/bootc` (or its symlink target on composefs
+    /// systems) so that `bootc-status-updated.path` fires.
+    #[context("Updating storage root mtime")]
+    pub(crate) fn update_mtime(&self) -> Result<()> {
+        // On composefs-only systems ostree is not initialized, so fall
+        // back to the physical root directly.
+        let sysroot_dir = if let Ok(ostree) = self.get_ostree() {
+            crate::utils::sysroot_dir(ostree).context("Reopen sysroot directory")?
+        } else {
+            self.physical_root.try_clone()?
+        };
+
+        sysroot_dir
+            .update_timestamps(std::path::Path::new(BOOTC_ROOT))
+            .context("update_timestamps")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The raw mode returned by metadata includes file type bits (S_IFDIR,
+    /// etc.) in addition to permission bits. This constant masks to only
+    /// the permission bits (owner/group/other rwx).
+    const PERMS: Mode = Mode::from_raw_mode(0o777);
+
+    #[test]
+    fn test_ensure_composefs_dir_mode() -> Result<()> {
+        use cap_std_ext::cap_primitives::fs::PermissionsExt as _;
+
+        let td = cap_std_ext::cap_tempfile::TempDir::new(cap_std::ambient_authority())?;
+
+        let assert_mode = || -> Result<()> {
+            let perms = td.metadata(COMPOSEFS)?.permissions();
+            let mode = Mode::from_raw_mode(perms.mode());
+            assert_eq!(mode & PERMS, COMPOSEFS_MODE);
+            Ok(())
+        };
+
+        ensure_composefs_dir(&td)?;
+        assert_mode()?;
+
+        // Calling again should be a no-op (ensure is idempotent)
+        ensure_composefs_dir(&td)?;
+        assert_mode()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ensure_composefs_dir_fixes_existing() -> Result<()> {
+        use cap_std_ext::cap_primitives::fs::PermissionsExt as _;
+
+        let td = cap_std_ext::cap_tempfile::TempDir::new(cap_std::ambient_authority())?;
+
+        // Create with overly permissive mode (simulating old bootc behavior)
+        let mut db = DirBuilder::new();
+        db.mode(0o755);
+        td.create_dir_with(COMPOSEFS, &db)?;
+
+        // Verify it starts with wrong permissions
+        let perms = td.metadata(COMPOSEFS)?.permissions();
+        let mode = Mode::from_raw_mode(perms.mode());
+        assert_eq!(mode & PERMS, Mode::from_raw_mode(0o755));
+
+        // ensure_composefs_dir should fix the permissions
+        ensure_composefs_dir(&td)?;
+
+        let perms = td.metadata(COMPOSEFS)?.permissions();
+        let mode = Mode::from_raw_mode(perms.mode());
+        assert_eq!(mode & PERMS, COMPOSEFS_MODE);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_grub_boot_location_classify() {
+        use crate::discoverable_partition_specification as dps;
+        use GrubBootLocation::*;
+
+        const LINUX_DATA: &str = "0fc63daf-8483-4772-8e79-3d69d8477de4";
+        let upper_xbootldr = dps::XBOOTLDR.to_ascii_uppercase();
+
+        // (parttype, fstype, has grub dir, expected)
+        let cases = [
+            // The ESP on /boot never holds GRUB's configuration
+            (Some(dps::ESP), "vfat", true, PhysicalRoot),
+            (Some(dps::ESP), "vfat", false, PhysicalRoot),
+            // XBOOTLDR, whatever its filesystem, if it has GRUB's configuration
+            (Some(dps::XBOOTLDR), "ext4", true, BootMount),
+            (Some(dps::XBOOTLDR), "vfat", true, BootMount),
+            (Some(dps::XBOOTLDR), "ext4", false, PhysicalRoot),
+            (Some(upper_xbootldr.as_str()), "xfs", true, BootMount),
+            // No DPS type: go by the filesystem
+            (Some(LINUX_DATA), "ext4", true, BootMount),
+            (Some(LINUX_DATA), "vfat", true, PhysicalRoot),
+            (None, "xfs", true, BootMount),
+            (None, "btrfs", false, PhysicalRoot),
+            (None, "vfat", true, PhysicalRoot),
+        ];
+        for (parttype, fstype, has_grub_dir, expected) in cases {
+            assert_eq!(
+                GrubBootLocation::classify(parttype, fstype, has_grub_dir),
+                expected,
+                "{parttype:?} {fstype} grub dir: {has_grub_dir}"
+            );
+        }
+
+        assert_eq!(PhysicalRoot.path(), "/sysroot/boot");
+        assert_eq!(BootMount.path(), "/boot");
+    }
+}

@@ -1,0 +1,2906 @@
+//! Composefs boot setup and configuration.
+//!
+//! This module handles setting up boot entries for composefs-based deployments,
+//! including generating BLS (Boot Loader Specification) entries, copying kernel/initrd
+//! files, managing UKI (Unified Kernel Images), and configuring the ESP (EFI System
+//! Partition).
+//!
+//! ## Boot Ordering
+//!
+//! A critical aspect of this module is boot entry ordering, which must work correctly
+//! across both Grub and systemd-boot bootloaders despite their fundamentally different
+//! sorting behaviors.
+//!
+//! ## Critical Context: Grub's Filename Parsing
+//!
+//! **Grub does NOT read BLS fields** - it parses the filename as an RPM package name!
+//! See: <https://github.com/ostreedev/ostree/issues/2961>
+//!
+//! Grub's `split_package_string()` parsing algorithm:
+//! 1. Strip `.conf` suffix
+//! 2. Find LAST `-` → extract **release** field
+//! 3. Find SECOND-TO-LAST `-` → extract **version** field
+//! 4. Remainder → **name** field
+//!
+//! Example: `kernel-5.14.0-362.fc38.conf`
+//! - name: `kernel`
+//! - version: `5.14.0`
+//! - release: `362.fc38`
+//!
+//! **Critical:** Grub sorts by (name, version, release) in DESCENDING order.
+//!
+//! ## Bootloader Differences
+//!
+//! ### Grub
+//! - Ignores BLS sort-key field completely
+//! - Parses filename to extract name-version-release
+//! - Sorts by (name, version, release) DESCENDING
+//! - Any `-` in name/version gets incorrectly split
+//!
+//! ### Systemd-boot
+//! - Reads BLS sort-key field
+//! - Sorts by sort-key ASCENDING (A→Z, 0→9)
+//! - Filename is mostly irrelevant
+//!
+//! ## Implementation Strategy
+//!
+//! **Filenames** (for Grub's RPM-style parsing and descending sort):
+//! - Format: `bootc_{os_id}-{version}-{priority}.conf`
+//! - Replace `-` with `_` in os_id to prevent mis-parsing
+//! - Primary: `bootc_fedora-41.20251125.0-1.conf` → (name=bootc_fedora, version=41.20251125.0, release=1)
+//! - Secondary: `bootc_fedora-41.20251124.0-0.conf` → (name=bootc_fedora, version=41.20251124.0, release=0)
+//! - Grub sorts: Primary (release=1) > Secondary (release=0) when versions equal
+//!
+//! **Sort-keys** (for systemd-boot's ascending sort):
+//! - Primary: `bootc-{os_id}-0` (lower value, sorts first)
+//! - Secondary: `bootc-{os_id}-1` (higher value, sorts second)
+//!
+//! ## Boot Entry Ordering
+//!
+//! After an upgrade, both bootloaders show:
+//! 1. **Primary**: New/upgraded deployment (default boot target)
+//! 2. **Secondary**: Currently booted deployment (rollback option)
+
+use std::cell::Cell;
+use std::fs::create_dir_all;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::fd::AsFd;
+use std::path::Path;
+use std::sync::Arc;
+
+use anyhow::{Context, Result, anyhow, bail};
+use bootc_mount::tempmount::TempMount;
+use camino::{Utf8Path, Utf8PathBuf};
+use cap_std_ext::{
+    cap_std::{ambient_authority, fs::Dir},
+    dirext::CapStdExtDirExt,
+};
+use clap::ValueEnum;
+use composefs::erofs::format::FormatVersion;
+use composefs::fs::read_file;
+use composefs::fsverity::{FsVerityHashValue, Sha512HashValue};
+use composefs::tree::{FileSystem, RegularFile};
+use composefs_boot::bootloader::{
+    BootEntry as ComposefsBootEntry, EFI_ADDON_DIR_EXT, EFI_ADDON_FILE_EXT, EFI_EXT, PEType,
+    UsrLibModulesVmlinuz,
+};
+use composefs_boot::cmdline::{KARG_COMPOSEFS_DIGEST, KARG_V2};
+use composefs_boot::{
+    cmdline::ComposefsCmdline as ComposefsBootCmdline, os_release::OsReleaseInfo, uki,
+};
+use composefs_ctl::composefs;
+use composefs_ctl::composefs_boot;
+use composefs_ctl::composefs_oci;
+use fn_error_context::context;
+use linux_kernel_cmdline::utf8::{Cmdline, Parameter, ParameterKey};
+use ostree_ext::composefs::dumpfile;
+use rustix::{mount::MountFlags, path::Arg};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::bootc_composefs::state::{get_booted_bls, write_composefs_state};
+use crate::bootc_composefs::status::build_composefs_karg;
+use crate::bootc_kargs::compute_new_kargs;
+use crate::composefs_consts::{TYPE1_BOOT_DIR_PREFIX, TYPE1_ENT_PATH, TYPE1_ENT_PATH_STAGED};
+use crate::parsers::bls_config::{BLSConfig, BLSConfigType, EFIKey};
+use crate::spec::BootloaderKind;
+use crate::task::Task;
+use crate::{
+    bootc_composefs::repo::open_composefs_repo,
+    store::{ComposefsRepository, Storage},
+};
+use crate::{bootc_composefs::status::get_sorted_grub_uki_boot_entries, install::PostFetchState};
+use crate::{
+    composefs_consts::{
+        BOOT_LOADER_ENTRIES, STAGED_BOOT_LOADER_ENTRIES, STATE_DIR_RELATIVE, UKI_NAME_PREFIX,
+        USER_CFG, USER_CFG_STAGED,
+    },
+    spec::{Bootloader, Host},
+};
+use crate::{parsers::grub_menuconfig::MenuEntry, store::BootedComposefs};
+
+use crate::install::{BOOT, RootSetup, State};
+
+/// Contains the EFP's filesystem UUID. Used by grub
+pub(crate) const EFI_UUID_FILE: &str = "efiuuid.cfg";
+/// The EFI Linux directory
+pub(crate) const EFI_LINUX: &str = "EFI/Linux";
+
+/// Timeout for systemd-boot bootloader menu
+const SYSTEMD_TIMEOUT: &str = "timeout 5";
+const SYSTEMD_LOADER_CONF_PATH: &str = "loader/loader.conf";
+
+pub(crate) const INITRD: &str = "initrd";
+pub(crate) const VMLINUZ: &str = "vmlinuz";
+
+const BOOTC_AUTOENROLL_PATH: &str = "usr/lib/bootc/install/secureboot-keys";
+
+const AUTH_EXT: &str = "auth";
+
+/// We want to be able to control the ordering of UKIs so we put them in a directory that's not the
+/// directory specified by the BLS spec. We do this because we want systemd-boot to only look at
+/// our config files and not show the actual UKIs in the bootloader menu
+/// This is relative to the ESP
+pub(crate) const BOOTC_UKI_DIR: &str = "EFI/Linux/bootc";
+
+/// Directory (relative to the ESP) where systemd-stub looks for UKI addons that apply
+/// to *every* UKI, as opposed to addons scoped to a single UKI (which live alongside
+/// it under [`BOOTC_UKI_DIR`]). Unlike per-UKI addons, these aren't tied to a single
+/// deployment, so they're neither namespaced by deployment verity nor cleaned up by GC.
+///
+/// TODO: This directory is shared, unscoped machine state (any systemd-stub UKI on the
+/// ESP will load whatever's here), but we currently treat it like deployment-owned
+/// content: we blindly overwrite same-named files with no ownership tracking, we only
+/// (re)install addons on `install` (not on upgrade, see `uki_addons` being hardcoded to
+/// `None` for `BootSetupType::Upgrade` below), and GC never removes stale entries here.
+/// Before recommending this feature for real use we should track which files here are
+/// bootc-owned, reconcile that set on every upgrade (installing newly-selected addons,
+/// removing ones we own that are no longer selected/present), and decide/document how
+/// this interacts with deployment rollback (a global addon update isn't reverted by
+/// rolling back to an older deployment).
+pub(crate) const GLOBAL_UKI_ADDONS_DIR: &str = "loader/addons";
+
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum UKIDigestMismatch {
+    #[error("The UKI has the wrong composefs= parameter (is '{actual}', should be '{expected}')")]
+    DigestParameter {
+        actual: String,
+        expected: String,
+        uki_name: Option<String>,
+    },
+    #[error(
+        "The UKI '{uki_name}' embedded composefs= digest ({actual:?}) doesn't match any of \
+         {combinations_tried} supported xattr filtering mode/EROFS format version combinations. \
+         The image may be corrupt, or was built with an incompatible composefs-rs version."
+    )]
+    UnsupportedCompatibility {
+        actual: Sha512HashValue,
+        uki_name: String,
+        combinations_tried: usize,
+    },
+}
+
+impl UKIDigestMismatch {
+    fn digest_parameter(actual: String, expected: String, uki_name: Option<String>) -> Self {
+        Self::DigestParameter {
+            actual,
+            expected,
+            uki_name,
+        }
+    }
+
+    fn unsupported_compatibility(
+        actual: Sha512HashValue,
+        uki_name: String,
+        combinations_tried: usize,
+    ) -> Self {
+        Self::UnsupportedCompatibility {
+            actual,
+            uki_name,
+            combinations_tried,
+        }
+    }
+
+    fn uki_name(&self) -> Option<&str> {
+        match self {
+            Self::DigestParameter { uki_name, .. } => uki_name.as_deref(),
+            Self::UnsupportedCompatibility { uki_name, .. } => Some(uki_name),
+        }
+    }
+}
+
+pub(crate) fn print_uki_dumpfile_diff(
+    mismatch: &UKIDigestMismatch,
+    repo: &ComposefsRepository,
+    fs: &FileSystem<Sha512HashValue>,
+) {
+    let dumpfile_name = mismatch
+        .uki_name()
+        .and_then(|x| x.strip_suffix(EFI_EXT).map(|x| format!("{x}.dump")));
+
+    let Some(dumpfile_name) = &dumpfile_name else {
+        return;
+    };
+
+    let Some(stored_content) = read_dumpfile_from_fs(fs, dumpfile_name, repo) else {
+        tracing::debug!("Dumpfile {dumpfile_name} not found in filesystem");
+        return;
+    };
+
+    let Ok(tempdir) = tempfile::tempdir() else {
+        tracing::debug!("Creating tempdir failed");
+        return;
+    };
+    let path = tempdir.path();
+    let Ok(tempdir_cap) = Dir::open_ambient_dir(path, ambient_authority()) else {
+        tracing::debug!("Opening tempdir failed");
+        return;
+    };
+
+    let Ok(mut stored_file) = tempdir_cap.create("stored") else {
+        tracing::debug!("Creating 'stored' tmpfile failed");
+        return;
+    };
+    if stored_file.write_all(&stored_content).is_err() {
+        tracing::debug!("Writing to tmpfile failed");
+        return;
+    }
+
+    let Ok(mut current_file) = tempdir_cap.create("current") else {
+        tracing::debug!("Creating 'current' tmpfile failed");
+        return;
+    };
+    if let Err(e) = dumpfile::write_dumpfile(&mut current_file, fs) {
+        tracing::debug!("Writing dumpfile failed: {e}");
+        return;
+    }
+
+    let mut cmd = std::process::Command::new("diff");
+    cmd.arg("--color=auto")
+        .arg(format!("{}/stored", path.display()))
+        .arg(format!("{}/current", path.display()));
+
+    // Redirect stdout to stderr since this is diagnostic output
+    if let Ok(fd) = std::io::stderr().as_fd().try_clone_to_owned() {
+        cmd.stdout(fd);
+    }
+
+    if let Err(e) = cmd.status() {
+        tracing::warn!("diffing dumpfiles failed with Err: {e:?}");
+    }
+}
+
+/// Print the dumpfile diff when a UKI digest mismatch is about to escape.
+pub(crate) fn print_uki_dumpfile_diff_on_mismatch<T>(
+    result: Result<T>,
+    repo: &ComposefsRepository,
+    fs: &FileSystem<Sha512HashValue>,
+) -> Result<T> {
+    if let Err(error) = &result {
+        if let Some(mismatch) = error.downcast_ref::<UKIDigestMismatch>() {
+            print_uki_dumpfile_diff(mismatch, repo, fs);
+        }
+    }
+    result
+}
+
+fn read_regular_file(
+    file: &RegularFile<Sha512HashValue>,
+    repo: &ComposefsRepository,
+) -> Option<Vec<u8>> {
+    match file {
+        RegularFile::External(object_id, _) | RegularFile::ExternalNoVerity(object_id, _) => {
+            repo.read_object(object_id).ok()
+        }
+        RegularFile::Inline(data) => Some(data.to_vec()),
+        RegularFile::Sparse(_) => None,
+    }
+}
+
+fn read_dumpfile_from_fs(
+    fs: &FileSystem<Sha512HashValue>,
+    dumpfile_name: &str,
+    repo: &ComposefsRepository,
+) -> Option<Vec<u8>> {
+    let root = fs.as_dir();
+    let dumpfile_os = std::ffi::OsStr::new(dumpfile_name);
+
+    if let Ok(boot_dir) = root.get_directory_ref(BOOT.as_ref()) {
+        if let Ok(file) = boot_dir.get_file(dumpfile_os) {
+            return read_regular_file(file, repo);
+        }
+    }
+
+    None
+}
+
+pub(crate) enum BootSetupType<'a> {
+    /// For initial setup, i.e. install to-disk
+    Setup((&'a RootSetup, &'a State, &'a PostFetchState, bool)),
+    /// For `bootc upgrade`
+    Upgrade((&'a Storage, &'a BootedComposefs, &'a Host)),
+}
+
+impl BootSetupType<'_> {
+    /// The directory holding GRUB's configuration and the BLS entries: `boot`
+    /// in the target root at install time. On a booted system, it's
+    /// `/sysroot/boot`, or `/boot` if that's a separate boot partition.
+    fn grub_boot_path(&self) -> Result<Utf8PathBuf> {
+        match self {
+            Self::Setup((root_setup, ..)) => Ok(root_setup.physical_root_path.join(BOOT)),
+            Self::Upgrade((storage, ..)) => Ok(storage.require_grub_boot_path()?.to_owned()),
+        }
+    }
+}
+
+/// The absolute path GRUB resolves the kernels and initramfses in BLS entries
+/// against: the root of the filesystem holding `grub_boot_path`.
+fn grub_bls_abs_entries_path(grub_boot_path: &Utf8Path) -> Result<Utf8PathBuf> {
+    let (Some(parent), Some(name)) = (grub_boot_path.parent(), grub_boot_path.file_name()) else {
+        anyhow::bail!("Invalid boot path {grub_boot_path}");
+    };
+    let parent = Dir::open_ambient_dir(parent, ambient_authority())
+        .with_context(|| format!("Opening {parent}"))?;
+    // If "boot" is a partition, we want the paths to be absolute to "/"
+    let is_mountpoint = parent
+        .is_mountpoint(name)
+        .with_context(|| format!("Checking if {grub_boot_path} is a mountpoint"))?;
+    // We can be fairly sure that the kernels we target support `statx`
+    let root = Utf8Path::new("/");
+    Ok(if is_mountpoint == Some(true) {
+        root.to_owned()
+    } else {
+        root.join(BOOT)
+    })
+}
+
+#[derive(
+    ValueEnum, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema,
+)]
+pub enum BootType {
+    #[default]
+    Bls,
+    Uki,
+}
+
+impl ::std::fmt::Display for BootType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            BootType::Bls => "bls",
+            BootType::Uki => "uki",
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
+impl TryFrom<&str> for BootType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        match value {
+            "bls" => Ok(Self::Bls),
+            "uki" => Ok(Self::Uki),
+            unrecognized => Err(anyhow::anyhow!(
+                "Unrecognized boot option: '{unrecognized}'"
+            )),
+        }
+    }
+}
+
+impl From<&ComposefsBootEntry<Sha512HashValue>> for BootType {
+    fn from(entry: &ComposefsBootEntry<Sha512HashValue>) -> Self {
+        match entry {
+            ComposefsBootEntry::Type1(..) => Self::Bls,
+            ComposefsBootEntry::Type2(..) => Self::Uki,
+            ComposefsBootEntry::UsrLibModulesVmLinuz(..) => Self::Bls,
+        }
+    }
+}
+
+/// Returns the beginning of the grub2/user.cfg file
+/// where we source a file containing the ESPs filesystem UUID
+pub(crate) fn get_efi_uuid_source() -> String {
+    format!(
+        r#"
+if [ -f ${{config_directory}}/{EFI_UUID_FILE} ]; then
+        source ${{config_directory}}/{EFI_UUID_FILE}
+fi
+"#
+    )
+}
+
+/// Mount flags shared by all ESP mounts: non-executable, no setuid.
+const ESP_MOUNT_FLAGS: MountFlags =
+    MountFlags::from_bits_retain(MountFlags::NOEXEC.bits() | MountFlags::NOSUID.bits());
+
+/// FAT mount options: owner-only permissions on files (0600) and dirs (0700).
+const ESP_MOUNT_DATA: &std::ffi::CStr = c"fmask=0177,dmask=0077";
+
+/// Fresh `mount(2)` of the ESP into a tempdir. Returns EBUSY if the device
+/// is already mounted in the current mount namespace; callers should use
+/// [`mount_esp_readonly`] or [`mount_esp_writable`] instead of this primitive
+/// so that pre-existing mounts are handled.
+fn mount_esp(device: &str) -> Result<TempMount> {
+    TempMount::mount_dev(device, "vfat", ESP_MOUNT_FLAGS, Some(ESP_MOUNT_DATA))
+}
+
+/// Get a read-only view of the ESP for the provided device, gracefully
+/// handling the case where the ESP is already mounted in the root mount
+/// namespace (e.g. via `systemd.mount-extra=UUID=<ESP>:/boot:auto:ro`).
+/// If the ESP is already mounted, that mount is cloned privately into a
+/// tempdir; otherwise a fresh read-write mount is performed. The returned
+/// mount may be rw or ro; callers must not write through it.
+pub fn mount_esp_readonly(device: &str) -> Result<TempMount> {
+    if let Some(existing) = bootc_mount::find_mount_target_by_source(device)? {
+        return TempMount::clone_existing_mount(&existing);
+    }
+    mount_esp(device)
+}
+
+/// Get a read-write view of the ESP for the provided device, gracefully
+/// handling the case where the ESP is already mounted (possibly read-only)
+/// in the current mount namespace.
+///
+/// If the ESP's device is already mounted, that mount is unconditionally
+/// remounted read-write *in place* first -- the same approach already
+/// used for `/sysroot` in `open_dir_remount_rw`, which likewise doesn't
+/// bother checking whether it's already writable before remounting.
+/// This matters because our own fresh `mount(2)` below would otherwise
+/// get `EBUSY` from the kernel's `get_tree_bdev_flags()` if the existing
+/// mount's `MS_RDONLY` state doesn't match what we're requesting (e.g.
+/// via a `systemd.mount-extra=UUID=...:/boot:auto:ro` cmdline karg
+/// written by `bootc install to-filesystem`). Note remounting a private
+/// *clone* of the existing mount would not be sufficient here: that only
+/// clears the clone's own mount-level read-only flag, not the shared
+/// superblock's, so writes through it would still fail with `EROFS`.
+/// Remounting the existing mount directly is safe because bootc always
+/// runs in its own unshared mount namespace (see
+/// `cli::ensure_self_unshared_mount_namespace`).
+pub fn mount_esp_writable(device: &str) -> Result<TempMount> {
+    if let Some(existing) = bootc_mount::find_mount_target_by_source(device)? {
+        rustix::mount::mount_remount(existing.as_str(), ESP_MOUNT_FLAGS, "")
+            .with_context(|| format!("Remounting {existing} read-write"))?;
+    }
+    mount_esp(device)
+}
+
+/// Mount the ESP from `device` at the given path and return a guard that
+/// synchronously unmounts (and flushes) it on drop.
+///
+/// Applies the same pre-emptive remount as `mount_esp_writable`; see
+/// there for details and caveats.
+pub(crate) fn mount_esp_at(
+    device: &str,
+    path: std::path::PathBuf,
+) -> Result<bootc_mount::tempmount::MountGuard> {
+    if let Some(existing) = bootc_mount::find_mount_target_by_source(device)? {
+        rustix::mount::mount_remount(existing.as_str(), ESP_MOUNT_FLAGS, "")
+            .with_context(|| format!("Remounting {existing} read-write"))?;
+    }
+    bootc_mount::tempmount::MountGuard::mount(
+        device,
+        path,
+        "vfat",
+        ESP_MOUNT_FLAGS,
+        Some(ESP_MOUNT_DATA),
+    )
+}
+
+/// Filename release field for primary (new/upgraded) entry.
+/// Grub parses this as the "release" field and sorts descending, so "1" > "0".
+pub(crate) const FILENAME_PRIORITY_PRIMARY: &str = "1";
+
+/// Filename release field for secondary (currently booted) entry.
+pub(crate) const FILENAME_PRIORITY_SECONDARY: &str = "0";
+
+/// Sort-key priority for primary (new/upgraded) entry.
+/// Systemd-boot sorts by sort-key in ascending order, so "0" appears before "1".
+pub(crate) const SORTKEY_PRIORITY_PRIMARY: &str = "0";
+
+/// Sort-key priority for secondary (currently booted) entry.
+pub(crate) const SORTKEY_PRIORITY_SECONDARY: &str = "1";
+
+/// Generate BLS Type 1 entry filename compatible with Grub's RPM-style parsing.
+///
+/// Format: `bootc_{os_id}-{version}-{priority}.conf`
+///
+/// Grub parses this as:
+/// - name: `bootc_{os_id}` (hyphens in os_id replaced with underscores)
+/// - version: `{version}`
+/// - release: `{priority}`
+///
+/// The underscore replacement prevents Grub from mis-parsing os_id values
+/// containing hyphens (e.g., "fedora-coreos" → "fedora_coreos").
+pub fn type1_entry_conf_file_name(
+    os_id: &str,
+    version: impl std::fmt::Display,
+    priority: &str,
+) -> String {
+    let os_id_safe = os_id.replace('-', "_");
+    format!("bootc_{os_id_safe}-{version}-{priority}.conf")
+}
+
+/// Generate sort key for the primary (new/upgraded) boot entry.
+/// Format: bootc-{id}-0
+/// Systemd-boot sorts ascending by sort-key, so "0" comes first.
+/// Grub ignores sort-key and uses filename/version ordering.
+pub(crate) fn primary_sort_key(os_id: &str) -> String {
+    format!("bootc-{os_id}-{SORTKEY_PRIORITY_PRIMARY}")
+}
+
+/// Generate sort key for the secondary (currently booted) boot entry.
+/// Format: bootc-{id}-1
+pub(crate) fn secondary_sort_key(os_id: &str) -> String {
+    format!("bootc-{os_id}-{SORTKEY_PRIORITY_SECONDARY}")
+}
+
+/// Returns the name of the directory where we store Type1 boot entries
+pub(crate) fn get_type1_dir_name(depl_verity: &str) -> String {
+    format!("{TYPE1_BOOT_DIR_PREFIX}{depl_verity}")
+}
+
+/// Returns the name of a UKI given verity digest
+pub(crate) fn get_uki_name(depl_verity: &str) -> String {
+    format!("{UKI_NAME_PREFIX}{depl_verity}{EFI_EXT}")
+}
+
+/// Returns the name of a UKI Addon directory given verity digest
+pub(crate) fn get_uki_addon_dir_name(depl_verity: &str) -> String {
+    format!("{UKI_NAME_PREFIX}{depl_verity}{EFI_ADDON_DIR_EXT}")
+}
+
+#[allow(dead_code)]
+/// Returns the name of a UKI Addon given verity digest
+pub(crate) fn get_uki_addon_file_name(depl_verity: &str) -> String {
+    format!("{UKI_NAME_PREFIX}{depl_verity}{EFI_ADDON_FILE_EXT}")
+}
+
+/// Compute SHA256Sum of VMlinuz + Initrd
+///
+/// # Arguments
+/// * entry - BootEntry containing VMlinuz and Initrd
+/// * repo - The composefs repository
+#[context("Computing boot digest")]
+fn compute_boot_digest(
+    entry: &UsrLibModulesVmlinuz<Sha512HashValue>,
+    repo: &crate::store::ComposefsRepository,
+) -> Result<String> {
+    let vmlinuz = read_file(&entry.vmlinuz, &repo).context("Reading vmlinuz")?;
+
+    let Some(initramfs) = &entry.initramfs else {
+        anyhow::bail!("initramfs not found");
+    };
+
+    let initramfs = read_file(initramfs, &repo).context("Reading intird")?;
+
+    let mut hasher = openssl::hash::Hasher::new(openssl::hash::MessageDigest::sha256())
+        .context("Creating hasher")?;
+
+    hasher.update(&vmlinuz).context("hashing vmlinuz")?;
+    hasher.update(&initramfs).context("hashing initrd")?;
+
+    let digest: &[u8] = &hasher.finish().context("Finishing digest")?;
+
+    Ok(hex::encode(digest))
+}
+
+#[context("Computing boot digest for Type1 entries")]
+fn compute_boot_digest_type1(dir: &Dir) -> Result<String> {
+    let mut vmlinuz = dir
+        .open(VMLINUZ)
+        .with_context(|| format!("Opening {VMLINUZ}"))?;
+
+    let mut initrd = dir
+        .open(INITRD)
+        .with_context(|| format!("Opening {INITRD}"))?;
+
+    let mut hasher = openssl::hash::Hasher::new(openssl::hash::MessageDigest::sha256())
+        .context("Creating hasher")?;
+
+    std::io::copy(&mut vmlinuz, &mut hasher)?;
+    std::io::copy(&mut initrd, &mut hasher)?;
+
+    let digest: &[u8] = &hasher.finish().context("Finishing digest")?;
+
+    Ok(hex::encode(digest))
+}
+
+/// Compute SHA256Sum of .linux + .initrd section of the UKI
+///
+/// # Arguments
+/// * entry - BootEntry containing VMlinuz and Initrd
+/// * repo - The composefs repository
+#[context("Computing boot digest")]
+pub(crate) fn compute_boot_digest_uki<R: Read + Seek>(uki_reader: &mut R) -> Result<String> {
+    let vmlinuz = uki::get_section_buffered(uki_reader, ".linux").context(".linux not present")?;
+    uki_reader
+        .seek(SeekFrom::Start(0))
+        .context("Moving seek to 0")?;
+    let initramfs =
+        uki::get_section_buffered(uki_reader, ".initrd").context(".initrd not present")?;
+
+    let mut hasher = openssl::hash::Hasher::new(openssl::hash::MessageDigest::sha256())
+        .context("Creating hasher")?;
+
+    hasher.update(&vmlinuz).context("hashing vmlinuz")?;
+    hasher.update(&initramfs).context("hashing initrd")?;
+
+    uki_reader.seek(SeekFrom::Start(0))?;
+    match uki::get_section_buffered(uki_reader, ".dtb") {
+        Ok(data) => hasher.update(&data).context("hashing dtb")?,
+        Err(uki::UkiError::MissingSection(_)) => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let digest: &[u8] = &hasher.finish().context("Finishing digest")?;
+
+    Ok(hex::encode(digest))
+}
+
+/// Given the SHA256 sum of current VMlinuz + Initrd combo, find boot entry with the same SHA256Sum
+///
+/// # Returns
+/// Returns the directory name that has the same sha256 digest for vmlinuz + initrd as the one
+/// that's passed in
+#[context("Checking boot entry duplicates")]
+pub(crate) fn find_vmlinuz_initrd_duplicate(
+    storage: &Storage,
+    digest: &str,
+) -> Result<Option<String>> {
+    let boot_dir = storage.bls_boot_binaries_dir()?;
+
+    for entry in boot_dir.entries_utf8()? {
+        let entry = entry?;
+        let dir_name = entry.file_name()?;
+
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let Some(..) = dir_name.strip_prefix(TYPE1_BOOT_DIR_PREFIX) else {
+            continue;
+        };
+
+        let entry_digest = compute_boot_digest_type1(&boot_dir.open_dir(&dir_name)?)?;
+
+        if entry_digest == digest {
+            return Ok(Some(dir_name));
+        }
+    }
+
+    Ok(None)
+}
+
+#[context("Writing BLS entries to disk")]
+fn write_bls_boot_entries_to_disk(
+    boot_dir: &Utf8PathBuf,
+    deployment_id: &Sha512HashValue,
+    entry: &UsrLibModulesVmlinuz<Sha512HashValue>,
+    repo: &crate::store::ComposefsRepository,
+) -> Result<()> {
+    let dir_name = get_type1_dir_name(&deployment_id.to_hex());
+
+    // Write the initrd and vmlinuz at /boot/composefs-<id>/
+    let path = boot_dir.join(&dir_name);
+    create_dir_all(&path)?;
+
+    let entries_dir = Dir::open_ambient_dir(&path, ambient_authority())
+        .with_context(|| format!("Opening {path}"))?;
+
+    entries_dir
+        .atomic_write(
+            VMLINUZ,
+            read_file(&entry.vmlinuz, &repo).context("Reading vmlinuz")?,
+        )
+        .context("Writing vmlinuz to path")?;
+
+    let Some(initramfs) = &entry.initramfs else {
+        anyhow::bail!("initramfs not found");
+    };
+
+    entries_dir
+        .atomic_write(
+            INITRD,
+            read_file(initramfs, &repo).context("Reading initrd")?,
+        )
+        .context("Writing initrd to path")?;
+
+    // Can't call fsync on O_PATH fds, so re-open it as a non O_PATH fd
+    let owned_fd = entries_dir
+        .reopen_as_ownedfd()
+        .context("Reopen as owned fd")?;
+
+    rustix::fs::fsync(owned_fd).context("fsync")?;
+
+    Ok(())
+}
+
+/// Parses /usr/lib/os-release and returns (id, title, version)
+/// Expects a reference to the root of the filesystem, or the root
+/// of a mounted EROFS
+pub fn parse_os_release(root: &Dir) -> Result<Option<(String, Option<String>, Option<String>)>> {
+    // Every update should have its own /usr/lib/os-release
+    let file = root
+        .open_optional("usr/lib/os-release")
+        .context("Opening usr/lib/os-release")?;
+
+    let Some(mut os_rel_file) = file else {
+        return Ok(None);
+    };
+
+    let mut file_contents = String::new();
+    os_rel_file.read_to_string(&mut file_contents)?;
+
+    let parsed = OsReleaseInfo::parse(&file_contents);
+
+    let os_id = parsed
+        .get_value(&["ID"])
+        .unwrap_or_else(|| "bootc".to_string());
+
+    Ok(Some((
+        os_id,
+        parsed.get_pretty_name(),
+        parsed.get_version(),
+    )))
+}
+
+struct BLSEntryPath {
+    /// Where to write vmlinuz/initrd
+    entries_path: Utf8PathBuf,
+    /// The absolute path, with reference to the partition's root, where the vmlinuz/initrd are written to
+    abs_entries_path: Utf8PathBuf,
+    /// Where to write the .conf files
+    config_path: Utf8PathBuf,
+}
+
+/// Replace either karg spelling to ensure only the selected EROFS format remains.
+fn replace_composefs_karg(cmdline: &mut Cmdline, new_karg: &str) -> Result<()> {
+    cmdline.remove(&ParameterKey::from(KARG_V2));
+    cmdline.remove(&ParameterKey::from(KARG_COMPOSEFS_DIGEST));
+    let parameter = Parameter::parse(new_karg).context("Parsing composefs kernel parameter")?;
+    cmdline.add_or_modify(&parameter);
+    Ok(())
+}
+
+/// Sets up and writes BLS entries and binaries (VMLinuz + Initrd) to disk
+///
+/// # Returns
+/// Returns the SHA256Sum of VMLinuz + Initrd combo. Error if any
+#[context("Setting up BLS boot")]
+pub(crate) fn setup_composefs_bls_boot(
+    setup_type: BootSetupType,
+    repo: &crate::store::ComposefsRepository,
+    id: &Sha512HashValue,
+    format_version: FormatVersion,
+    entry: &ComposefsBootEntry<Sha512HashValue>,
+    mounted_erofs: &Dir,
+) -> Result<String> {
+    let id_hex = id.to_hex();
+
+    let (esp_device, mut cmdline_refs, bootloader) = match setup_type {
+        BootSetupType::Setup((root_setup, state, postfetch, allow_missing_fsverity)) => {
+            // root_setup.kargs has [root=UUID=<UUID>, "rw"]
+            let mut cmdline_options = Cmdline::new();
+
+            cmdline_options.extend(&root_setup.kargs);
+
+            if let Some(user_kargs) = &state.config_opts.karg {
+                for karg in user_kargs {
+                    cmdline_options.extend(karg);
+                }
+            }
+
+            let composefs_cmdline =
+                build_composefs_karg(id.clone(), format_version, allow_missing_fsverity);
+            cmdline_options.extend(&Cmdline::from(&composefs_cmdline));
+
+            // If there's a separate /boot partition, add a systemd.mount-extra
+            // karg so systemd mounts it after reboot. This avoids writing to
+            // /etc/fstab which conflicts with transient etc (see #1388).
+            if let Some(boot) = root_setup.boot_mount_spec() {
+                if !boot.source.is_empty() {
+                    let mount_extra = format!(
+                        "systemd.mount-extra={}:/boot:{}:{}",
+                        boot.source,
+                        boot.fstype,
+                        boot.options.as_deref().unwrap_or("defaults"),
+                    );
+                    cmdline_options.extend(&Cmdline::from(mount_extra.as_str()));
+                    tracing::debug!("Added /boot mount karg: {mount_extra}");
+                }
+            }
+
+            // Locate ESP partition device by walking up to the root disk(s)
+            let esp_part = root_setup.device_info.find_first_colocated_esp()?;
+
+            (
+                esp_part.path(),
+                cmdline_options,
+                postfetch.detected_bootloader.clone(),
+            )
+        }
+
+        BootSetupType::Upgrade((storage, booted_cfs, host)) => {
+            let bootloader = host.require_composefs_booted()?.bootloader.clone();
+
+            let boot_dir = storage.require_boot_dir()?;
+            let current_cfg = get_booted_bls(&boot_dir, booted_cfs)?;
+
+            let mut cmdline = match current_cfg.cfg_type {
+                BLSConfigType::NonEFI { options, .. } => {
+                    let options = options
+                        .ok_or_else(|| anyhow::anyhow!("No 'options' found in BLS Config"))?;
+
+                    Cmdline::from(options)
+                }
+
+                _ => anyhow::bail!("Found NonEFI config"),
+            };
+
+            replace_composefs_karg(
+                &mut cmdline,
+                &build_composefs_karg(
+                    id.clone(),
+                    format_version,
+                    booted_cfs.cmdline.allow_missing_fsverity,
+                ),
+            )?;
+
+            // Locate ESP partition device by walking up to the root disk(s)
+            let root_dev = bootc_blockdev::list_dev_by_dir(&storage.physical_root)?;
+            let esp_dev = root_dev.find_first_colocated_esp()?;
+
+            (esp_dev.path(), cmdline, bootloader)
+        }
+    };
+
+    let is_upgrade = matches!(setup_type, BootSetupType::Upgrade(..));
+
+    let current_root = if is_upgrade {
+        Some(&Dir::open_ambient_dir("/", ambient_authority()).context("Opening root")? as &Dir)
+    } else {
+        None
+    };
+
+    compute_new_kargs(mounted_erofs, current_root, &mut cmdline_refs)?;
+
+    let (entry_paths, _tmpdir_guard) = match bootloader.kind()? {
+        BootloaderKind::GRUBClassic => {
+            let boot_path = setup_type.grub_boot_path()?;
+
+            // Grub wants the paths to be absolute against the mounted drive that the kernel +
+            // initrd live in
+            let abs_entries_path = grub_bls_abs_entries_path(&boot_path)?;
+
+            (
+                BLSEntryPath {
+                    entries_path: boot_path.clone(),
+                    config_path: boot_path,
+                    abs_entries_path,
+                },
+                None,
+            )
+        }
+
+        BootloaderKind::BLSCompatible => {
+            let efi_mount = mount_esp_writable(&esp_device).context("Mounting ESP")?;
+
+            let mounted_efi = Utf8PathBuf::from(efi_mount.dir.path().as_str()?);
+            let efi_linux_dir = mounted_efi.join(EFI_LINUX);
+
+            (
+                BLSEntryPath {
+                    entries_path: efi_linux_dir,
+                    config_path: mounted_efi.clone(),
+                    abs_entries_path: Utf8PathBuf::from("/").join(EFI_LINUX),
+                },
+                Some(efi_mount),
+            )
+        }
+    };
+
+    let (bls_config, boot_digest, os_id) = match &entry {
+        ComposefsBootEntry::Type1(..) => anyhow::bail!("Found Type1 entries in /boot"),
+        ComposefsBootEntry::Type2(..) => anyhow::bail!("Found UKI"),
+
+        ComposefsBootEntry::UsrLibModulesVmLinuz(usr_lib_modules_vmlinuz) => {
+            let boot_digest = compute_boot_digest(usr_lib_modules_vmlinuz, &repo)
+                .context("Computing boot digest")?;
+
+            let osrel = parse_os_release(mounted_erofs)?;
+
+            let (os_id, title, version, sort_key) = match osrel {
+                Some((id_str, title_opt, version_opt)) => (
+                    id_str.clone(),
+                    title_opt.unwrap_or_else(|| id.to_hex()),
+                    version_opt.unwrap_or_else(|| id.to_hex()),
+                    primary_sort_key(&id_str),
+                ),
+                None => {
+                    let default_id = "bootc".to_string();
+                    (
+                        default_id.clone(),
+                        id.to_hex(),
+                        id.to_hex(),
+                        primary_sort_key(&default_id),
+                    )
+                }
+            };
+
+            let mut bls_config = BLSConfig::default();
+
+            let entries_dir = get_type1_dir_name(&id_hex);
+
+            bls_config
+                .with_title(title)
+                .with_version(version)
+                .with_sort_key(sort_key)
+                .with_cfg(BLSConfigType::NonEFI {
+                    linux: entry_paths
+                        .abs_entries_path
+                        .join(&entries_dir)
+                        .join(VMLINUZ),
+                    initrd: vec![entry_paths.abs_entries_path.join(&entries_dir).join(INITRD)],
+                    options: Some(cmdline_refs),
+                });
+
+            let shared_entry = match setup_type {
+                BootSetupType::Setup(_) => None,
+                BootSetupType::Upgrade((storage, ..)) => {
+                    find_vmlinuz_initrd_duplicate(storage, &boot_digest)?
+                }
+            };
+
+            match shared_entry {
+                Some(shared_entry) => {
+                    // Multiple deployments could be using the same kernel + initrd, but there
+                    // would be only one available
+                    //
+                    // Symlinking directories themselves would be better, but vfat does not support
+                    // symlinks
+                    match bls_config.cfg_type {
+                        BLSConfigType::NonEFI {
+                            ref mut linux,
+                            ref mut initrd,
+                            ..
+                        } => {
+                            *linux = entry_paths
+                                .abs_entries_path
+                                .join(&shared_entry)
+                                .join(VMLINUZ);
+
+                            *initrd = vec![
+                                entry_paths
+                                    .abs_entries_path
+                                    .join(&shared_entry)
+                                    .join(INITRD),
+                            ];
+                        }
+
+                        _ => unreachable!(),
+                    };
+                }
+
+                None => {
+                    write_bls_boot_entries_to_disk(
+                        &entry_paths.entries_path,
+                        id,
+                        usr_lib_modules_vmlinuz,
+                        &repo,
+                    )?;
+                }
+            };
+
+            (bls_config, boot_digest, os_id)
+        }
+    };
+
+    let loader_path = entry_paths.config_path.join("loader");
+
+    let (config_path, booted_bls) = if is_upgrade {
+        let boot_dir = Dir::open_ambient_dir(&entry_paths.config_path, ambient_authority())?;
+
+        let BootSetupType::Upgrade((_, booted_cfs, ..)) = setup_type else {
+            // This is just for sanity
+            unreachable!("enum mismatch");
+        };
+
+        let mut booted_bls = get_booted_bls(&boot_dir, booted_cfs)?;
+        booted_bls.sort_key = Some(secondary_sort_key(&os_id));
+
+        let staged_path = loader_path.join(STAGED_BOOT_LOADER_ENTRIES);
+
+        // Delete the staged entries directory if it exists as we want to overwrite the entries
+        // anyway
+        if boot_dir
+            .remove_all_optional(TYPE1_ENT_PATH_STAGED)
+            .context("Failed to remove staged directory")?
+        {
+            tracing::debug!("Removed existing staged entries directory");
+        }
+
+        // This will be atomically renamed to 'loader/entries' on shutdown/reboot
+        (staged_path, Some(booted_bls))
+    } else {
+        (loader_path.join(BOOT_LOADER_ENTRIES), None)
+    };
+
+    create_dir_all(&config_path).with_context(|| format!("Creating {:?}", config_path))?;
+
+    let loader_entries_dir = Dir::open_ambient_dir(&config_path, ambient_authority())
+        .with_context(|| format!("Opening {config_path:?}"))?;
+
+    loader_entries_dir.atomic_write(
+        type1_entry_conf_file_name(&os_id, &bls_config.version(), FILENAME_PRIORITY_PRIMARY),
+        bls_config.to_string().as_bytes(),
+    )?;
+
+    if let Some(booted_bls) = booted_bls {
+        loader_entries_dir.atomic_write(
+            type1_entry_conf_file_name(&os_id, &booted_bls.version(), FILENAME_PRIORITY_SECONDARY),
+            booted_bls.to_string().as_bytes(),
+        )?;
+    }
+
+    let owned_loader_entries_fd = loader_entries_dir
+        .reopen_as_ownedfd()
+        .context("Reopening as owned fd")?;
+
+    rustix::fs::fsync(owned_loader_entries_fd).context("fsync")?;
+
+    Ok(boot_digest)
+}
+
+struct UKIInfo {
+    boot_label: String,
+    version: Option<String>,
+    os_id: Option<String>,
+    boot_digest: String,
+    composefs_digest: Sha512HashValue,
+}
+
+/// The EROFS format a UKI composefs kernel argument claims for its digest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UkiCandidateFormat {
+    /// `composefs.digest=v1-<hash>-<lg>:<hex>`
+    V1,
+    /// `composefs.digest=v2-<hash>-<lg>:<hex>`
+    V2,
+    /// Bare `composefs=<hex>`.  composefs-rs documents this as shorthand for
+    /// V2, but bootc has sealed several formats under it: 1.16.0 through
+    /// 1.16.2 predate format versioning (the original composefs-rs encoding
+    /// that V2 descends from), 1.16.3 sealed V2, and 1.16.4 through 1.16.13
+    /// sealed V1 because composefs-rs switched its default while `ukify` kept
+    /// emitting only the bare key.  Only the digest itself identifies the image.
+    Unspecified,
+}
+
+impl UkiCandidateFormat {
+    /// Whether an image serialized as `version` satisfies this argument.
+    fn accepts(self, version: FormatVersion) -> bool {
+        match self {
+            Self::V1 => matches!(version, FormatVersion::V0 | FormatVersion::V1),
+            Self::V2 => version == FormatVersion::V2,
+            Self::Unspecified => true,
+        }
+    }
+}
+
+impl std::fmt::Display for UkiCandidateFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::V1 => "V1",
+            Self::V2 => "V2",
+            Self::Unspecified => "V1 or V2",
+        })
+    }
+}
+
+/// One composefs digest from a UKI command line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UkiComposefsCandidate {
+    digest: Sha512HashValue,
+    insecure: bool,
+    format: UkiCandidateFormat,
+}
+
+/// Parse every composefs argument emitted by supported bootc UKIs.
+fn parse_uki_composefs_candidates(cmdline: &str) -> Result<Vec<UkiComposefsCandidate>> {
+    let mut candidates = Vec::with_capacity(2);
+    let mut seen_legacy = false;
+
+    for parameter in Cmdline::from(cmdline).iter() {
+        let key = parameter.key();
+        let legacy = &*key == KARG_V2;
+        if !legacy && &*key != KARG_COMPOSEFS_DIGEST {
+            continue;
+        }
+
+        let value = parameter
+            .value()
+            .ok_or_else(|| anyhow!("{key}= composefs kernel argument has no value"))?;
+        if legacy {
+            anyhow::ensure!(
+                !seen_legacy,
+                "duplicate {KARG_V2}= composefs kernel argument"
+            );
+            seen_legacy = true;
+        }
+
+        // Reuse the composefs-rs parser for the digest and insecure marker,
+        // but don't trust the format it infers for the bare legacy key.
+        let parsed =
+            ComposefsBootCmdline::<Sha512HashValue>::from_cmdline(&format!("{key}={value}"))?;
+        let (digest, insecure, format) = match parsed {
+            None => continue,
+            Some(ComposefsBootCmdline::V1 { digest, insecure }) => {
+                (digest, insecure, UkiCandidateFormat::V1)
+            }
+            Some(ComposefsBootCmdline::V2 { digest, insecure }) if legacy => {
+                (digest, insecure, UkiCandidateFormat::Unspecified)
+            }
+            Some(ComposefsBootCmdline::V2 { digest, insecure }) => {
+                (digest, insecure, UkiCandidateFormat::V2)
+            }
+        };
+        candidates.push(UkiComposefsCandidate {
+            digest,
+            insecure,
+            format,
+        });
+    }
+    Ok(candidates)
+}
+
+fn uki_candidates_policy(candidates: &[UkiComposefsCandidate]) -> Result<bool> {
+    let first = candidates
+        .first()
+        .ok_or_else(|| anyhow!("No composefs digest in UKI cmdline"))?
+        .insecure;
+    anyhow::ensure!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.insecure == first),
+        "UKI composefs candidates have mixed fs-verity policies"
+    );
+    Ok(first)
+}
+
+/// Retain the historical V1 preference for the deployment identity while
+/// validating every fallback candidate.  This avoids changing the naming of
+/// existing dual-format UKIs when their kernel arguments are reordered.
+fn primary_uki_candidate(candidates: &[UkiComposefsCandidate]) -> &UkiComposefsCandidate {
+    candidates
+        .iter()
+        .find(|candidate| candidate.format == UkiCandidateFormat::V1)
+        .or_else(|| candidates.first())
+        .expect("UKI candidates were checked as non-empty")
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ExpectedBootImageIds {
+    v1: Vec<Sha512HashValue>,
+    v2: Vec<Sha512HashValue>,
+}
+
+impl ExpectedBootImageIds {
+    /// The boot images whose format satisfies `candidate`.
+    fn ids_for_candidate(
+        &self,
+        candidate: &UkiComposefsCandidate,
+    ) -> impl Iterator<Item = &Sha512HashValue> {
+        let (v1, v2): (&[_], &[_]) = match candidate.format {
+            UkiCandidateFormat::V1 => (&self.v1, &[]),
+            UkiCandidateFormat::V2 => (&[], &self.v2),
+            UkiCandidateFormat::Unspecified => (&self.v1, &self.v2),
+        };
+        v1.iter().chain(v2)
+    }
+
+    fn contains(&self, candidate: &UkiComposefsCandidate) -> bool {
+        self.ids_for_candidate(candidate)
+            .any(|id| id == &candidate.digest)
+    }
+
+    fn add(&mut self, version: FormatVersion, digest: Sha512HashValue) {
+        let ids = match version {
+            FormatVersion::V0 | FormatVersion::V1 => &mut self.v1,
+            FormatVersion::V2 => &mut self.v2,
+        };
+        if !ids.contains(&digest) {
+            ids.push(digest);
+        }
+    }
+}
+
+fn validate_uki_candidates(
+    candidates: &[UkiComposefsCandidate],
+    expected: &ExpectedBootImageIds,
+    uki_name: Option<String>,
+) -> Result<()> {
+    for candidate in candidates {
+        if expected.contains(candidate) {
+            continue;
+        }
+        let expected_digests = expected
+            .ids_for_candidate(candidate)
+            .map(Sha512HashValue::to_hex)
+            .collect::<Vec<_>>();
+        let expected = if expected_digests.is_empty() {
+            format!("a {} boot image", candidate.format)
+        } else {
+            expected_digests.join(", ")
+        };
+        return Err(UKIDigestMismatch::digest_parameter(
+            candidate.digest.to_hex(),
+            expected,
+            uki_name,
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Determines the directory (under `mounted_efi`) that a PE binary should be written to.
+///
+/// - A UKI, or an addon scoped to a single UKI, is namespaced under [`BOOTC_UKI_DIR`] by
+///   the deployment's verity digest, so it doesn't collide with other deployments.
+/// - A global UKI addon applies to every UKI, so it's written to the shared
+///   [`GLOBAL_UKI_ADDONS_DIR`] instead.
+fn pe_output_dir(
+    pe_type: &PEType,
+    mounted_efi: &Path,
+    file_path: &Utf8Path,
+    uki_id: &Sha512HashValue,
+) -> std::path::PathBuf {
+    if matches!(pe_type, PEType::GlobalUkiAddon) {
+        return mounted_efi.join(GLOBAL_UKI_ADDONS_DIR);
+    }
+
+    let efi_linux_path = mounted_efi.join(BOOTC_UKI_DIR);
+
+    match file_path.parent() {
+        Some(parent) if parent.as_str().ends_with(EFI_ADDON_DIR_EXT) => {
+            let dir_name = get_uki_addon_dir_name(&uki_id.to_hex());
+            let renamed_path = parent
+                .parent()
+                .map(|p| p.join(&dir_name))
+                .unwrap_or(dir_name.into());
+
+            efi_linux_path.join(renamed_path)
+        }
+
+        Some(parent) => efi_linux_path.join(parent),
+
+        None => efi_linux_path,
+    }
+}
+
+/// Writes a PortableExecutable to ESP along with any PE specific or Global addons
+#[context("Writing {file_path} to ESP")]
+fn write_pe_to_esp(
+    repo: &crate::store::ComposefsRepository,
+    file: &RegularFile<Sha512HashValue>,
+    file_path: &Utf8Path,
+    pe_type: PEType,
+    uki_id: &Sha512HashValue,
+    boot_ids: &ExpectedBootImageIds,
+    missing_fsverity_allowed: bool,
+    mounted_efi: impl AsRef<Path>,
+) -> Result<Option<UKIInfo>> {
+    let mut uki_reader = match file {
+        RegularFile::Inline(..) => {
+            // UKI/Addons would always be large enough to be an external object
+            anyhow::bail!("File too small to be UKI/Addon")
+        }
+        RegularFile::External(id, ..) | RegularFile::ExternalNoVerity(id, ..) => {
+            std::fs::File::from(repo.open_object(id)?)
+        }
+        RegularFile::Sparse(..) => {
+            anyhow::bail!("Sparse file cannot be a UKI/Addon")
+        }
+    };
+
+    let mut boot_label: Option<UKIInfo> = None;
+
+    // UKI Extension might not even have a cmdline
+    // TODO: UKI Addon might also have a composefs= cmdline?
+    if matches!(pe_type, PEType::Uki) {
+        let cmdline = uki::get_cmdline_buffered(&mut uki_reader).context("Getting UKI cmdline")?;
+
+        let composefs_candidates = parse_uki_composefs_candidates(&cmdline)
+            .context("Parsing composefs kernel arguments")?;
+        let missing_verity_allowed_cmdline = uki_candidates_policy(&composefs_candidates)?;
+        let composefs_digest = primary_uki_candidate(&composefs_candidates).digest.clone();
+
+        anyhow::ensure!(
+            !missing_verity_allowed_cmdline || missing_fsverity_allowed,
+            "The UKI requests insecure composefs operation, but this repository requires fs-verity. Use --allow-missing-verity only when missing fs-verity is explicitly supported for this install."
+        );
+
+        // If the UKI cmdline does not match what the user has passed as cmdline option
+        // NOTE: This will only be checked for new installs and now upgrades/switches
+        match missing_fsverity_allowed {
+            true if !missing_verity_allowed_cmdline => {
+                tracing::warn!(
+                    "--allow-missing-verity passed as option but UKI cmdline does not support it"
+                );
+            }
+
+            false if missing_verity_allowed_cmdline => {
+                tracing::warn!("UKI cmdline has composefs set as insecure");
+            }
+
+            _ => { /* no-op */ }
+        }
+
+        validate_uki_candidates(
+            &composefs_candidates,
+            boot_ids,
+            file_path.file_name().map(|name| name.to_string()),
+        )?;
+
+        uki_reader.seek(SeekFrom::Start(0))?;
+        let osrel = uki::get_text_section_buffered(&mut uki_reader, ".osrel")?;
+
+        let parsed_osrel = OsReleaseInfo::parse(&osrel);
+
+        uki_reader.seek(SeekFrom::Start(0))?;
+        let boot_digest = compute_boot_digest_uki(&mut uki_reader)?;
+
+        uki_reader.seek(SeekFrom::Start(0))?;
+        boot_label = Some(UKIInfo {
+            boot_label: uki::get_boot_label_buffered(&mut uki_reader)
+                .context("Getting UKI boot label")?,
+            version: parsed_osrel.get_version(),
+            os_id: parsed_osrel.get_value(&["ID"]),
+            boot_digest,
+            composefs_digest,
+        });
+    }
+
+    let final_pe_path = pe_output_dir(&pe_type, mounted_efi.as_ref(), file_path, uki_id);
+    create_dir_all(&final_pe_path).with_context(|| format!("Creating {final_pe_path:?}"))?;
+
+    let pe_dir = Dir::open_ambient_dir(&final_pe_path, ambient_authority())
+        .with_context(|| format!("Opening {final_pe_path:?}"))?;
+
+    let pe_name_owned;
+    let pe_name = match pe_type {
+        PEType::Uki => {
+            pe_name_owned = get_uki_name(&boot_label.as_ref().unwrap().composefs_digest.to_hex());
+            &pe_name_owned
+        }
+        PEType::UkiAddon | PEType::GlobalUkiAddon => file_path
+            .components()
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get UKI Addon file name"))?
+            .as_str(),
+    };
+
+    uki_reader.seek(SeekFrom::Start(0))?;
+    pe_dir
+        .atomic_replace_with(pe_name, |writer| std::io::copy(&mut uki_reader, writer))
+        .context("Writing UKI")?;
+
+    rustix::fs::fsync(
+        pe_dir
+            .reopen_as_ownedfd()
+            .context("Reopening as owned fd")?,
+    )
+    .context("fsync")?;
+
+    Ok(boot_label)
+}
+
+fn uki_file_name(file_path: &Path) -> Result<String> {
+    let file_path = Utf8Path::from_path(file_path)
+        .ok_or_else(|| anyhow!("UKI path is not valid UTF-8: {file_path:?}"))?;
+    file_path
+        .file_name()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("Could not get UKI file name from {file_path}"))
+}
+
+/// Inspect primary UKIs to discover their requested fs-verity policy before
+/// creating the durable repository. Final artifact validation occurs while
+/// writing each UKI to the ESP.
+pub(crate) fn uki_fsverity_policy(
+    repo: &crate::store::ComposefsRepository,
+    entries: &[ComposefsBootEntry<Sha512HashValue>],
+) -> Result<Option<bool>> {
+    let mut policy = None;
+    for entry in entries {
+        let ComposefsBootEntry::Type2(entry) = entry else {
+            continue;
+        };
+        if !matches!(entry.pe_type, PEType::Uki) {
+            continue;
+        }
+        let mut reader = match &entry.file {
+            RegularFile::External(id, ..) | RegularFile::ExternalNoVerity(id, ..) => {
+                std::fs::File::from(repo.open_object(id)?)
+            }
+            RegularFile::Inline(..) | RegularFile::Sparse(..) => {
+                anyhow::bail!("UKI file is not a regular external object")
+            }
+        };
+        let cmdline = uki::get_cmdline_buffered(&mut reader).context("Getting UKI cmdline")?;
+        let candidates = parse_uki_composefs_candidates(&cmdline).with_context(|| {
+            format!(
+                "Parsing composefs kernel arguments in UKI {}",
+                entry.file_path.display()
+            )
+        })?;
+        let current = uki_candidates_policy(&candidates)?;
+        if let Some(previous) = policy {
+            anyhow::ensure!(
+                previous == current,
+                "Primary UKIs request conflicting composefs fs-verity policies"
+            );
+        } else {
+            policy = Some(current);
+        }
+    }
+    Ok(policy)
+}
+
+/// The composefs digests embedded in the primary UKI's kernel cmdline, used to
+/// reconcile the freshly-generated boot image digest before it is mounted.
+struct ExpectedComposefsDigest {
+    candidates: Vec<UkiComposefsCandidate>,
+    uki_name: String,
+}
+
+/// Scans `entries` for the primary UKI (`PEType::Uki`, not an addon) and
+/// extracts the composefs digests embedded in its kernel cmdline.
+///
+/// Returns `Ok(None)` if there is no UKI entry (e.g. a BLS-only boot setup) —
+/// there's nothing to validate against in that case.
+fn find_expected_composefs_digest(
+    repo: &crate::store::ComposefsRepository,
+    entries: &[ComposefsBootEntry<Sha512HashValue>],
+) -> Result<Option<ExpectedComposefsDigest>> {
+    for entry in entries {
+        let ComposefsBootEntry::Type2(entry) = entry else {
+            continue;
+        };
+        if !matches!(entry.pe_type, PEType::Uki) {
+            continue;
+        }
+        let mut uki_reader = match &entry.file {
+            RegularFile::External(id, ..) | RegularFile::ExternalNoVerity(id, ..) => {
+                std::fs::File::from(repo.open_object(id)?)
+            }
+            RegularFile::Inline(..) | RegularFile::Sparse(..) => {
+                anyhow::bail!("UKI file is not a regular external object")
+            }
+        };
+        let cmdline = uki::get_cmdline_buffered(&mut uki_reader).context("Getting UKI cmdline")?;
+        let candidates = parse_uki_composefs_candidates(&cmdline)
+            .context("Parsing composefs kernel arguments")?;
+        uki_candidates_policy(&candidates)?;
+        let uki_name = uki_file_name(&entry.file_path)?;
+        return Ok(Some(ExpectedComposefsDigest {
+            candidates,
+            uki_name,
+        }));
+    }
+    Ok(None)
+}
+
+/// Validates that the freshly-generated boot image digest `computed_id`
+/// matches what's embedded in the UKI (if any), and if not, searches for an
+/// [`composefs_oci::XattrFiltering`] mode whose boot image digest does match
+/// via [`composefs_oci::find_matching_boot_image`], before giving up.
+///
+/// This handles images built with older (or newer) composefs-rs tooling
+/// that computed their embedded UKI digest using a different default xattr
+/// filtering mode or EROFS format than the one bootc's own build used.
+#[context("Verifying composefs digest against UKI")]
+pub(crate) fn ensure_correct_composefs_digest(
+    repo: &Arc<crate::store::ComposefsRepository>,
+    manifest_digest: &composefs_oci::OciDigest,
+    computed_id: Sha512HashValue,
+    expected_ids: ExpectedBootImageIds,
+    entries: &[ComposefsBootEntry<Sha512HashValue>],
+) -> Result<RecoveredBootImage> {
+    let Some(expected) =
+        find_expected_composefs_digest(repo, entries).context("Checking UKI composefs digest")?
+    else {
+        // No UKI (e.g. a BLS-only setup); nothing to cross-check.
+        return Ok(RecoveredBootImage {
+            id: computed_id,
+            expected_ids,
+        });
+    };
+    reconcile_uki_candidates(&expected, expected_ids, |digest| {
+        composefs_oci::find_matching_boot_image(repo, manifest_digest, digest)
+    })
+}
+
+/// The repository-independent part of [`ensure_correct_composefs_digest`]:
+/// every UKI candidate must name a boot image of an acceptable format, found
+/// either among `expected_ids` or via `find_matching`.
+fn reconcile_uki_candidates(
+    expected: &ExpectedComposefsDigest,
+    mut expected_ids: ExpectedBootImageIds,
+    mut find_matching: impl FnMut(
+        &Sha512HashValue,
+    ) -> Result<composefs_oci::BootImageMatch<Sha512HashValue>>,
+) -> Result<RecoveredBootImage> {
+    for candidate in &expected.candidates {
+        if expected_ids.contains(candidate) {
+            continue;
+        }
+        // This is expected when e.g. the repository only generated one of the
+        // formats in a dual-format UKI, so it isn't worth alarming anyone.
+        tracing::debug!(
+            "UKI {} names {} boot image {:?}, which is not among the images generated \
+             for this pull; searching other xattr filtering modes and EROFS format versions",
+            expected.uki_name,
+            candidate.format,
+            candidate.digest,
+        );
+        let mismatch = UKIDigestMismatch::unsupported_compatibility(
+            candidate.digest.clone(),
+            expected.uki_name.clone(),
+            0,
+        );
+        let (version, digest) =
+            resolve_boot_image_match(mismatch, candidate, find_matching(&candidate.digest))?;
+        expected_ids.add(version, digest);
+    }
+    let selected = primary_uki_candidate(&expected.candidates);
+    anyhow::ensure!(
+        expected_ids.contains(selected),
+        "Recovered boot image does not match the primary UKI composefs candidate"
+    );
+    Ok(RecoveredBootImage {
+        id: selected.digest.clone(),
+        expected_ids,
+    })
+}
+
+pub(crate) struct RecoveredBootImage {
+    pub(crate) id: Sha512HashValue,
+    pub(crate) expected_ids: ExpectedBootImageIds,
+}
+
+/// Interprets the result of searching for a boot image whose digest matches
+/// `expected` (see [`composefs_oci::find_matching_boot_image`]): uses the
+/// matching mode's digest if one was found, or fails with an error listing
+/// every combination tried if not.
+///
+/// Factored out from [`ensure_correct_composefs_digest`] purely so this
+/// decision logic can be unit tested without a real repo or UKI fixture.
+fn resolve_boot_image_match(
+    mismatch: UKIDigestMismatch,
+    candidate: &UkiComposefsCandidate,
+    find_matching_result: Result<composefs_oci::BootImageMatch<Sha512HashValue>>,
+) -> Result<(FormatVersion, Sha512HashValue)> {
+    match find_matching_result.context(
+        "Searching for a boot image xattr filtering mode/format version matching the UKI digest",
+    )? {
+        composefs_oci::BootImageMatch::Found {
+            mode,
+            version,
+            digest,
+        } => {
+            tracing::info!(
+                "Boot image built with {mode:?} xattr filtering (EROFS {version:?}) matches \
+                 the UKI; using it"
+            );
+            anyhow::ensure!(
+                candidate.format.accepts(version),
+                "UKI composefs candidate format ({}) does not match recovered EROFS format \
+                 ({version:?}) for {:?}",
+                candidate.format,
+                candidate.digest,
+            );
+            Ok((version, digest))
+        }
+        composefs_oci::BootImageMatch::NotFound(tried) => match mismatch {
+            UKIDigestMismatch::UnsupportedCompatibility {
+                actual, uki_name, ..
+            } => Err(UKIDigestMismatch::unsupported_compatibility(actual, uki_name, tried).into()),
+            _ => unreachable!("compatibility search always creates an unsupported mismatch"),
+        },
+    }
+}
+
+#[context("Writing Grub menuentry")]
+fn write_grub_uki_menuentry(
+    setup_type: &BootSetupType,
+    boot_label: String,
+    id: &Sha512HashValue,
+    esp_device: &String,
+) -> Result<()> {
+    let boot_dir = setup_type.grub_boot_path()?;
+    create_dir_all(&boot_dir).context("Failed to create boot dir")?;
+
+    let is_upgrade = matches!(setup_type, BootSetupType::Upgrade(..));
+
+    let efi_uuid_source = get_efi_uuid_source();
+
+    let user_cfg_name = if is_upgrade {
+        USER_CFG_STAGED
+    } else {
+        USER_CFG
+    };
+
+    let grub_dir = Dir::open_ambient_dir(boot_dir.join("grub2"), ambient_authority())
+        .context("opening boot/grub2")?;
+
+    // Iterate over all available deployments, and generate a menuentry for each
+    if is_upgrade {
+        let mut str_buf = String::new();
+        let boot_dir =
+            Dir::open_ambient_dir(boot_dir, ambient_authority()).context("Opening boot dir")?;
+        let entries = get_sorted_grub_uki_boot_entries(&boot_dir, &mut str_buf)?;
+
+        grub_dir
+            .atomic_replace_with(user_cfg_name, |f| -> std::io::Result<_> {
+                f.write_all(efi_uuid_source.as_bytes())?;
+                f.write_all(
+                    MenuEntry::new(&boot_label, &id.to_hex())
+                        .to_string()
+                        .as_bytes(),
+                )?;
+
+                // Write out only the currently booted entry, which should be the very first one
+                // Even if we have booted into the second menuentry "boot entry", the default will be the
+                // first one
+                f.write_all(entries[0].to_string().as_bytes())?;
+
+                Ok(())
+            })
+            .with_context(|| format!("Writing to {user_cfg_name}"))?;
+
+        rustix::fs::fsync(grub_dir.reopen_as_ownedfd()?).context("fsync")?;
+
+        return Ok(());
+    }
+
+    // Open grub2/efiuuid.cfg and write the EFI partition fs-UUID in there
+    // This will be sourced by grub2/user.cfg to be used for `--fs-uuid`
+    let esp_uuid = Task::new("blkid for ESP UUID", "blkid")
+        .args(["-s", "UUID", "-o", "value", &esp_device])
+        .read()?;
+
+    grub_dir.atomic_write(
+        EFI_UUID_FILE,
+        format!("set EFI_PART_UUID=\"{}\"", esp_uuid.trim()).as_bytes(),
+    )?;
+
+    // Write to grub2/user.cfg
+    grub_dir
+        .atomic_replace_with(user_cfg_name, |f| -> std::io::Result<_> {
+            f.write_all(efi_uuid_source.as_bytes())?;
+            f.write_all(
+                MenuEntry::new(&boot_label, &id.to_hex())
+                    .to_string()
+                    .as_bytes(),
+            )?;
+
+            Ok(())
+        })
+        .with_context(|| format!("Writing to {user_cfg_name}"))?;
+
+    rustix::fs::fsync(grub_dir.reopen_as_ownedfd()?).context("fsync")?;
+
+    Ok(())
+}
+
+#[context("Writing systemd UKI config")]
+fn write_systemd_uki_config(
+    esp_dir: &Dir,
+    setup_type: &BootSetupType,
+    boot_label: String,
+    version: Option<String>,
+    os_id: Option<String>,
+    id: &Sha512HashValue,
+    bootloader: &Bootloader,
+) -> Result<()> {
+    let os_id = os_id.as_deref().unwrap_or("bootc");
+    let primary_sort_key = primary_sort_key(os_id);
+
+    let mut bls_conf = BLSConfig::default();
+    bls_conf
+        .with_title(boot_label)
+        .with_cfg(BLSConfigType::EFI {
+            key: EFIKey::for_bootloader(
+                format!("/{BOOTC_UKI_DIR}/{}", get_uki_name(&id.to_hex())).into(),
+                bootloader,
+            ),
+        })
+        .with_sort_key(primary_sort_key.clone())
+        .with_version(version.unwrap_or_else(|| id.to_hex()));
+
+    let (entries_dir, booted_bls) = match setup_type {
+        BootSetupType::Setup(..) => {
+            esp_dir
+                .create_dir_all(TYPE1_ENT_PATH)
+                .with_context(|| format!("Creating {TYPE1_ENT_PATH}"))?;
+
+            (esp_dir.open_dir(TYPE1_ENT_PATH)?, None)
+        }
+
+        BootSetupType::Upgrade((_, booted_cfs, ..)) => {
+            esp_dir
+                .create_dir_all(TYPE1_ENT_PATH_STAGED)
+                .with_context(|| format!("Creating {TYPE1_ENT_PATH_STAGED}"))?;
+
+            let mut booted_bls = get_booted_bls(&esp_dir, booted_cfs)?;
+            booted_bls.sort_key = Some(secondary_sort_key(os_id));
+
+            (esp_dir.open_dir(TYPE1_ENT_PATH_STAGED)?, Some(booted_bls))
+        }
+    };
+
+    entries_dir
+        .atomic_write(
+            type1_entry_conf_file_name(os_id, &bls_conf.version(), FILENAME_PRIORITY_PRIMARY),
+            bls_conf.to_string().as_bytes(),
+        )
+        .context("Writing conf file")?;
+
+    if let Some(booted_bls) = booted_bls {
+        entries_dir.atomic_write(
+            type1_entry_conf_file_name(os_id, &booted_bls.version(), FILENAME_PRIORITY_SECONDARY),
+            booted_bls.to_string().as_bytes(),
+        )?;
+    }
+
+    // Write the timeout for bootloader menu if not exists
+    if !esp_dir.exists(SYSTEMD_LOADER_CONF_PATH) {
+        esp_dir
+            .atomic_write(SYSTEMD_LOADER_CONF_PATH, SYSTEMD_TIMEOUT)
+            .with_context(|| format!("Writing to {SYSTEMD_LOADER_CONF_PATH}"))?;
+    }
+
+    let esp_dir = esp_dir
+        .reopen_as_ownedfd()
+        .context("Reopening as owned fd")?;
+    rustix::fs::fsync(esp_dir).context("fsync")?;
+
+    Ok(())
+}
+
+#[context("Setting up UKI boot")]
+pub(crate) fn setup_composefs_uki_boot(
+    setup_type: BootSetupType,
+    repo: &crate::store::ComposefsRepository,
+    id: &Sha512HashValue,
+    boot_ids: &ExpectedBootImageIds,
+    entries: Vec<ComposefsBootEntry<Sha512HashValue>>,
+) -> Result<(String, Sha512HashValue)> {
+    let (esp_device, bootloader, missing_fsverity_allowed, uki_addons) = match setup_type {
+        BootSetupType::Setup((root_setup, state, postfetch, allow_missing_fsverity)) => {
+            state.require_no_kargs_for_uki()?;
+
+            // Locate ESP partition device by walking up to the root disk(s)
+            let esp_part = root_setup.device_info.find_first_colocated_esp()?;
+
+            (
+                esp_part.path(),
+                postfetch.detected_bootloader.clone(),
+                allow_missing_fsverity,
+                state.composefs_options.uki_addon.as_ref(),
+            )
+        }
+
+        BootSetupType::Upgrade((storage, booted_cfs, host)) => {
+            let bootloader = host.require_composefs_booted()?.bootloader.clone();
+
+            // Locate ESP partition device by walking up to the root disk(s)
+            let root_dev = bootc_blockdev::list_dev_by_dir(&storage.physical_root)?;
+            let esp_dev = root_dev.find_first_colocated_esp()?;
+
+            (
+                esp_dev.path(),
+                bootloader,
+                booted_cfs.cmdline.allow_missing_fsverity,
+                // TODO: We never (re)install UKI addons on upgrade, only on initial
+                // `install`. This is especially relevant for global addons (see the
+                // TODO on `GLOBAL_UKI_ADDONS_DIR`): if a newer image changes or drops
+                // one, the ESP copy is never reconciled.
+                None,
+            )
+        }
+    };
+
+    let esp_mount = mount_esp_writable(&esp_device).context("Mounting ESP")?;
+
+    let mut uki_info: Option<UKIInfo> = None;
+
+    for entry in entries {
+        match entry {
+            ComposefsBootEntry::Type1(..) => tracing::debug!("Skipping Type1 Entry"),
+            ComposefsBootEntry::UsrLibModulesVmLinuz(..) => {
+                tracing::debug!("Skipping vmlinuz in /usr/lib/modules")
+            }
+
+            ComposefsBootEntry::Type2(entry) => {
+                // If --uki-addon is not passed, we don't install any addon (whether
+                // it's scoped to this UKI or a global one)
+                if matches!(entry.pe_type, PEType::UkiAddon | PEType::GlobalUkiAddon) {
+                    let Some(addons) = uki_addons else {
+                        continue;
+                    };
+
+                    let addon_name = entry
+                        .file_path
+                        .components()
+                        .last()
+                        .ok_or_else(|| anyhow::anyhow!("Could not get UKI addon name"))?;
+
+                    let addon_name = addon_name.as_str()?;
+
+                    let addon_name =
+                        addon_name.strip_suffix(EFI_ADDON_FILE_EXT).ok_or_else(|| {
+                            anyhow::anyhow!("UKI addon doesn't end with {EFI_ADDON_DIR_EXT}")
+                        })?;
+
+                    if !addons.iter().any(|passed_addon| passed_addon == addon_name) {
+                        continue;
+                    }
+                }
+
+                let utf8_file_path = Utf8Path::from_path(&entry.file_path)
+                    .ok_or_else(|| anyhow::anyhow!("Path is not valid UTf8"))?;
+
+                let ret = write_pe_to_esp(
+                    &repo,
+                    &entry.file,
+                    utf8_file_path,
+                    entry.pe_type,
+                    &id,
+                    boot_ids,
+                    missing_fsverity_allowed,
+                    esp_mount.dir.path(),
+                )?;
+
+                if let Some(label) = ret {
+                    uki_info = Some(label);
+                }
+            }
+        };
+    }
+
+    let uki_info =
+        uki_info.ok_or_else(|| anyhow::anyhow!("Failed to get version and boot label from UKI"))?;
+
+    let UKIInfo {
+        boot_label,
+        version,
+        os_id,
+        boot_digest,
+        composefs_digest: deploy_id,
+    } = uki_info;
+
+    match bootloader.kind()? {
+        BootloaderKind::GRUBClassic => {
+            write_grub_uki_menuentry(&setup_type, boot_label, &deploy_id, &esp_device)?
+        }
+
+        BootloaderKind::BLSCompatible => write_systemd_uki_config(
+            &esp_mount.fd,
+            &setup_type,
+            boot_label,
+            version,
+            os_id,
+            &deploy_id,
+            &bootloader,
+        )?,
+    };
+
+    Ok((boot_digest, deploy_id))
+}
+
+/// A composefs image attached to a temporary directory with the ESP and a
+/// tmpfs mounted inside it, ready for bootloader installation.
+///
+/// The composefs image (a detached `fsmount(2)` fd with no VFS path) is
+/// attached to a tmpdir via `move_mount(2)`, giving us a real filesystem path
+/// that `mount(2)` and bootctl can use.  The ESP is mounted at
+/// `<tmpdir>/efi` (if that directory exists in the image) or `<tmpdir>/boot`,
+/// per the Boot Loader Specification.  A tmpfs is also mounted at
+/// `<tmpdir>/tmp` to provide a writable scratch area for tools invoked with
+/// `--root`.
+///
+/// Drop order matters: the tmpfs guard is declared before `composefs` so it
+/// is unmounted (and flushed) before the composefs root is detached.
+pub(crate) struct MountedImageRoot {
+    // The ESP's device path. The ESP is intentionally *not* mounted here for
+    // our whole lifetime; it's mounted on demand via `with_esp()` instead.
+    // That's because `install_via_bootupd` runs bootupd's install tooling
+    // inside a `ChrootCmd`, which unshares the mount namespace and
+    // recursively self-binds the chroot directory (our `root_path()`) onto
+    // itself. If the ESP were already mounted at `<root_path>/boot` when
+    // that happens, the self-bind would duplicate it into an
+    // orphaned/shadowed mountinfo entry that's still visible to naive
+    // `findmnt`-based scans (like bootupd's), causing it to pick the wrong
+    // filesystem UUID.
+    esp_device: Utf8PathBuf,
+    // Tracks whether the ESP is currently mounted, i.e. whether we're
+    // inside a call to `with_esp()`. Guards `open_esp_dir()` against
+    // returning the wrong thing: without this, calling it while the ESP
+    // isn't mounted would silently open the empty `esp_subdir` directory
+    // that already exists directly in the composefs image, rather than
+    // failing.
+    esp_mounted: Cell<bool>,
+    // Unmounted before `composefs` on drop.
+    _tmp: bootc_mount::tempmount::MountGuard,
+    composefs: TempMount,
+    pub(crate) esp_subdir: &'static str,
+}
+
+impl MountedImageRoot {
+    /// Find the ESP on `device`, attach the composefs image to a tmpdir, and
+    /// mount the ESP and a scratch tmpfs inside it.
+    // TODO: install to all ESPs on multi-device setups
+    #[context("Preparing image root for bootloader installation")]
+    pub(crate) fn new(
+        composefs_mnt_fd: std::os::fd::OwnedFd,
+        device: &bootc_blockdev::Device,
+    ) -> Result<Self> {
+        let roots = device.find_all_roots()?;
+        let mut esp_part = None;
+        for root in &roots {
+            if let Some(esp) = root.find_partition_of_esp_optional()? {
+                esp_part = Some(esp);
+                break;
+            }
+        }
+        let esp_part = esp_part.ok_or_else(|| anyhow!("ESP partition not found"))?;
+
+        // Attach the detached composefs fsmount fd to a real tmpdir path so
+        // that mount(2) and bootctl --root can work with it.
+        let composefs = TempMount::mount_fd(composefs_mnt_fd)
+            .context("Attaching composefs image to temporary directory")?;
+
+        // TODO: support XBOOTLDR.  Per BLS, the ESP should be mounted at /efi
+        // when a separate XBOOTLDR partition is present at /boot.  bootc does
+        // not yet detect or use XBOOTLDR in the composefs install path, so
+        // unconditionally mount the ESP at /boot for now.
+        let esp_subdir = "boot";
+
+        // Mount a tmpfs over /tmp so that tools invoked with --root have a
+        // writable scratch area without touching the read-only EROFS root.
+        let tmp_path = composefs.dir.path().join("tmp");
+        let tmp = bootc_mount::tempmount::MountGuard::mount(
+            "tmpfs",
+            tmp_path,
+            "tmpfs",
+            MountFlags::NOEXEC | MountFlags::NOSUID | MountFlags::NODEV,
+            None::<&std::ffi::CStr>,
+        )
+        .context("Mounting tmpfs into composefs root")?;
+
+        Ok(Self {
+            esp_device: esp_part.path().into(),
+            esp_mounted: Cell::new(false),
+            _tmp: tmp,
+            composefs,
+            esp_subdir,
+        })
+    }
+
+    /// The composefs image as a capability-safe directory (for file reads).
+    pub(crate) fn dir(&self) -> &Dir {
+        &self.composefs.fd
+    }
+
+    /// Real filesystem path of the composefs tmpdir root.
+    pub(crate) fn root_path(&self) -> &std::path::Path {
+        self.composefs.dir.path()
+    }
+
+    /// Open the mounted ESP as a capability-safe directory.
+    ///
+    /// Fails unless called from within a call to [`Self::with_esp`]: the ESP
+    /// is only actually mounted for the duration of that call, and
+    /// `esp_subdir` otherwise refers to an ordinary (empty) directory that
+    /// already exists directly in the composefs image.
+    pub(crate) fn open_esp_dir(&self) -> Result<Dir> {
+        if !self.esp_mounted.get() {
+            bail!("BUG: attempted to open the ESP directory while it is not mounted");
+        }
+        self.composefs
+            .fd
+            .open_dir(self.esp_subdir)
+            .with_context(|| format!("Opening ESP at /{}", self.esp_subdir))
+    }
+
+    /// Mount the ESP at `<tmpdir>/<esp_subdir>` for the duration of `f`, then
+    /// unmount it again. Nothing is mounted there outside of calls to this
+    /// method, so callers that need to invoke bootloader-install tooling
+    /// that itself creates a private mount namespace (e.g. via `ChrootCmd`)
+    /// can safely do so without risking this mount being shadowed/duplicated
+    /// by that tooling's own mount-namespace setup.
+    pub(crate) fn with_esp<T>(&self, f: impl FnOnce(&Dir) -> Result<T>) -> Result<T> {
+        let esp_path = self.root_path().join(self.esp_subdir);
+        let _guard = mount_esp_at(self.esp_device.as_str(), esp_path)
+            .context("Mounting ESP into composefs root")?;
+
+        self.esp_mounted.set(true);
+        // Reset `esp_mounted` when we return, including via `?` or panic,
+        // so a later `with_esp()` call (or a stray `open_esp_dir()` call
+        // after this one returns) doesn't see a stale "mounted" state.
+        struct ResetOnDrop<'a>(&'a Cell<bool>);
+        impl Drop for ResetOnDrop<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        let _reset = ResetOnDrop(&self.esp_mounted);
+
+        let dir = self.open_esp_dir()?;
+        f(&dir)
+    }
+}
+
+pub struct SecurebootKeys {
+    pub dir: Dir,
+    pub keys: Vec<Utf8PathBuf>,
+}
+
+fn get_secureboot_keys(fs: &Dir, p: &str) -> Result<Option<SecurebootKeys>> {
+    let mut entries = vec![];
+
+    // if the dir doesn't exist, return None
+    let keys_dir = match fs.open_dir_optional(p)? {
+        Some(d) => d,
+        _ => return Ok(None),
+    };
+
+    // https://github.com/systemd/systemd/blob/26b2085d54ebbfca8637362eafcb4a8e3faf832f/man/systemd-boot.xml#L392
+
+    for entry in keys_dir.entries()? {
+        let dir_e = entry?;
+        let dirname = dir_e.file_name();
+        if !dir_e.file_type()?.is_dir() {
+            bail!("/{p}/{dirname:?} is not a directory");
+        }
+
+        let dir_path: Utf8PathBuf = dirname.try_into()?;
+        let dir = dir_e.open_dir()?;
+        for entry in dir.entries()? {
+            let e = entry?;
+            let local: Utf8PathBuf = e.file_name().try_into()?;
+            let path = dir_path.join(local);
+
+            if path.extension() != Some(AUTH_EXT) {
+                continue;
+            }
+
+            if !e.file_type()?.is_file() {
+                bail!("/{p}/{path:?} is not a file");
+            }
+            entries.push(path);
+        }
+    }
+    return Ok(Some(SecurebootKeys {
+        dir: keys_dir,
+        keys: entries,
+    }));
+}
+
+#[context("Setting up composefs boot")]
+pub(crate) async fn setup_composefs_boot(
+    root_setup: &RootSetup,
+    state: &State,
+    pull_result: &composefs_oci::PullResult<Sha512HashValue>,
+    allow_missing_fsverity: bool,
+) -> Result<()> {
+    const COMPOSEFS_BOOT_SETUP_JOURNAL_ID: &str = "1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5";
+
+    tracing::info!(
+        message_id = COMPOSEFS_BOOT_SETUP_JOURNAL_ID,
+        bootc.operation = "boot_setup",
+        bootc.config_digest = %pull_result.config_digest,
+        bootc.allow_missing_fsverity = allow_missing_fsverity,
+        "Setting up composefs boot",
+    );
+
+    let mut repo = open_composefs_repo(&root_setup.physical_root)?;
+    if allow_missing_fsverity {
+        repo.set_insecure();
+    }
+
+    let repo = Arc::new(repo);
+
+    let crate::bootc_composefs::repo::BootImage {
+        id,
+        boot_ids,
+        fs,
+        entries,
+    } = crate::bootc_composefs::repo::prepare_boot_image(&repo, pull_result)?;
+
+    let composefs_mnt_fd = repo
+        .mount(&id.to_hex())
+        .context("Failed to mount composefs image")?;
+    let mounted_root = MountedImageRoot::new(composefs_mnt_fd, &root_setup.device_info)?;
+
+    let postfetch = PostFetchState::new(state, mounted_root.dir())?;
+
+    let boot_uuid = root_setup
+        .get_boot_uuid()?
+        .or(root_setup.rootfs_uuid.as_deref())
+        .ok_or_else(|| anyhow!("No uuid for boot/root"))?;
+
+    if cfg!(target_arch = "s390x") {
+        // TODO: Integrate s390x support into install_via_bootupd
+        crate::bootloader::install_via_zipl(
+            &root_setup.device_info.require_single_root()?,
+            boot_uuid,
+        )?;
+    } else if matches!(
+        postfetch.detected_bootloader,
+        Bootloader::Grub | Bootloader::GrubCC
+    ) {
+        let chroot_target = Utf8Path::from_path(mounted_root.root_path())
+            .ok_or_else(|| anyhow!("composefs tmpdir path is not valid UTF-8"))?;
+        // Like the ostree backend, bind the physical root's real /boot (an
+        // ordinary ext4/xfs/... directory, not yet populated with kernels at
+        // this point) into the chroot. This gives bootupd both a correct
+        // filesystem to inspect for `--write-uuid` (rather than the ESP,
+        // which is otherwise mounted at the composefs root's own /boot) and
+        // an empty `boot/efi` directory for its EFI component to discover
+        // and mount the real ESP into, exactly as it would on ostree.
+        let bind_boot_path = root_setup.physical_root_path.join(BOOT);
+        crate::bootloader::install_via_bootupd(
+            &root_setup.device_info,
+            &root_setup.physical_root_path,
+            &state.config_opts,
+            Some(chroot_target),
+            Some(bind_boot_path.as_path()),
+        )?;
+
+        // FIXME: Remove this hack once we have support in bootupd
+        if matches!(postfetch.detected_bootloader, Bootloader::GrubCC) {
+            // bootupctl wrote this under the physical root's real /boot (via
+            // the bind mount above), not under the composefs root.
+            root_setup
+                .physical_root
+                .remove_all_optional("boot/grub2")
+                .context("removing grub2")?;
+
+            // install_via_bootupd above has already returned, so it's safe
+            // to mount the ESP here for the duration of this cleanup.
+            mounted_root.with_esp(|esp_dir| {
+                let (os_id, ..) = parse_os_release(mounted_root.dir())?
+                    .ok_or_else(|| anyhow::anyhow!("Failed to parse os-release"))?;
+
+                let dir = format!("EFI/{os_id}");
+
+                // Files are in EFI/<os-name>/
+                let efis_dir = esp_dir
+                    .open_dir(&dir)
+                    .with_context(|| format!("Opening {dir}"))?;
+
+                efis_dir
+                    .remove_file_optional("bootuuid.cfg")
+                    .context("Removing bootuuid.cfg")?;
+                efis_dir
+                    .remove_file_optional("grub.cfg")
+                    .context("Removing grub.cfg")?;
+
+                let final_name = match std::env::consts::ARCH {
+                    "x86_64" => "grubx64.efi",
+                    "aarch64" => "grubaa64-cc.efi",
+                    arch => anyhow::bail!("GrubCC not supported for: {arch}"),
+                };
+
+                mounted_root
+                    .dir()
+                    .copy("usr/lib/grub-cc/grub-cc.efi", &efis_dir, final_name)
+                    .context("Copying grub-cc binary")?;
+
+                Ok(())
+            })?;
+        }
+    } else {
+        mounted_root.with_esp(|_esp_dir| {
+            crate::bootloader::install_systemd_boot(
+                &mounted_root,
+                &state.config_opts,
+                get_secureboot_keys(mounted_root.dir(), BOOTC_AUTOENROLL_PATH)?,
+            )
+        })?;
+    }
+
+    let Some(entry) = entries.iter().next() else {
+        anyhow::bail!("No boot entries!");
+    };
+
+    let boot_type = BootType::from(entry);
+
+    let repo = Arc::try_unwrap(repo).map_err(|_| {
+        anyhow::anyhow!(
+            "BUG: Arc<Repository> still has other references after boot image generation"
+        )
+    })?;
+
+    let (provisional_deploy_id, provisional_format) = (id.clone(), repo.erofs_version());
+    let (boot_digest, deploy_id) = match boot_type {
+        BootType::Bls => (
+            setup_composefs_bls_boot(
+                BootSetupType::Setup((&root_setup, &state, &postfetch, allow_missing_fsverity)),
+                &repo,
+                &provisional_deploy_id,
+                provisional_format,
+                entry,
+                mounted_root.dir(),
+            )?,
+            provisional_deploy_id,
+        ),
+        BootType::Uki => print_uki_dumpfile_diff_on_mismatch(
+            setup_composefs_uki_boot(
+                BootSetupType::Setup((&root_setup, &state, &postfetch, allow_missing_fsverity)),
+                &repo,
+                &provisional_deploy_id,
+                &boot_ids,
+                entries,
+            ),
+            &repo,
+            &fs,
+        )?,
+    };
+
+    write_composefs_state(
+        &root_setup.physical_root_path,
+        &deploy_id,
+        &crate::spec::ImageReference::from(state.target_imgref.clone()),
+        None,
+        boot_type,
+        boot_digest,
+        &pull_result.manifest_digest.to_string(),
+        allow_missing_fsverity,
+    )
+    .await?;
+
+    if let Some(contents) = state.root_ssh_authorized_keys.as_deref() {
+        let deployment = root_setup
+            .physical_root
+            .open_dir(format!("{STATE_DIR_RELATIVE}/{}", deploy_id.to_hex()))
+            .context("Opening deployment state")?;
+        crate::install::osconfig::inject_root_ssh_authorized_keys(
+            mounted_root.dir(),
+            &deployment,
+            state.load_policy()?.as_ref(),
+            contents,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Associate every accepted boot image with its EROFS serialization format.
+/// A UKI's V1 candidate must never be accepted merely because its digest is a
+/// valid V2 image (or vice versa). `selected` is the freshly generated image;
+/// recovered images are added with their actual format by the recovery path.
+pub(crate) fn expected_boot_image_ids(
+    v1: Option<Sha512HashValue>,
+    v2: Option<Sha512HashValue>,
+    selected: &Sha512HashValue,
+    selected_format: FormatVersion,
+) -> ExpectedBootImageIds {
+    let mut ids = ExpectedBootImageIds::default();
+    if let Some(v1) = v1 {
+        ids.add(FormatVersion::V1, v1);
+    }
+    if let Some(v2) = v2 {
+        ids.add(FormatVersion::V2, v2);
+    }
+    ids.add(selected_format, selected.clone());
+    ids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use composefs::erofs::format::FormatVersion;
+
+    #[test]
+    fn test_grub_bls_abs_entries_path() -> Result<()> {
+        let td = tempfile::tempdir()?;
+        let td = Utf8Path::from_path(td.path()).unwrap();
+        let boot = td.join(BOOT);
+        std::fs::create_dir(&boot)?;
+        // boot on the root filesystem
+        assert_eq!(grub_bls_abs_entries_path(&boot)?, "/boot");
+        // A separate filesystem
+        assert_eq!(grub_bls_abs_entries_path(Utf8Path::new("/proc"))?, "/");
+        // Nothing to check
+        assert!(grub_bls_abs_entries_path(Utf8Path::new("/")).is_err());
+        assert!(grub_bls_abs_entries_path(&td.join("nonexistent/boot")).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_composefs_karg() {
+        let mut cmdline =
+            Cmdline::from("root=UUID=abc composefs=old composefs.digest=v1-sha512-12:stale");
+        replace_composefs_karg(
+            &mut cmdline,
+            "composefs.digest=v1-sha512-12:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        )
+        .unwrap();
+        let rendered = cmdline.to_string();
+        assert!(!rendered.contains("composefs=old"));
+        assert!(!rendered.contains(":stale"));
+        assert!(rendered.contains("root=UUID=abc"));
+    }
+
+    #[test]
+    fn test_pe_output_dir() {
+        let mounted_efi = Path::new("/esp");
+        let uki_id = Sha512HashValue::EMPTY;
+        let uki_hex = uki_id.to_hex();
+
+        // Boot entry paths are relative to the directory they were discovered in
+        // (e.g. "/boot/EFI/Linux" or "/boot/loader/addons"), not absolute filesystem paths.
+
+        // A UKI itself always lands directly in BOOTC_UKI_DIR.
+        assert_eq!(
+            pe_output_dir(&PEType::Uki, mounted_efi, Utf8Path::new("foo.efi"), &uki_id),
+            mounted_efi.join(BOOTC_UKI_DIR)
+        );
+
+        // A per-UKI addon (nested under a `<name>.efi.extra.d` directory) gets
+        // renamed into a directory namespaced by the UKI's verity digest.
+        assert_eq!(
+            pe_output_dir(
+                &PEType::UkiAddon,
+                mounted_efi,
+                Utf8Path::new("foo.efi.extra.d/bar.addon.efi"),
+                &uki_id
+            ),
+            mounted_efi
+                .join(BOOTC_UKI_DIR)
+                .join(get_uki_addon_dir_name(&uki_hex))
+        );
+
+        // A global UKI addon is written to the shared addons directory, not
+        // namespaced by any particular UKI's verity digest.
+        assert_eq!(
+            pe_output_dir(
+                &PEType::GlobalUkiAddon,
+                mounted_efi,
+                Utf8Path::new("bar.addon.efi"),
+                &uki_id
+            ),
+            mounted_efi.join(GLOBAL_UKI_ADDONS_DIR)
+        );
+    }
+
+    #[test]
+    fn test_type1_filename_generation() {
+        // Test basic os_id without hyphens
+        let filename =
+            type1_entry_conf_file_name("fedora", "41.20251125.0", FILENAME_PRIORITY_PRIMARY);
+        assert_eq!(filename, "bootc_fedora-41.20251125.0-1.conf");
+
+        // Test primary vs secondary priority
+        let primary =
+            type1_entry_conf_file_name("fedora", "41.20251125.0", FILENAME_PRIORITY_PRIMARY);
+        let secondary =
+            type1_entry_conf_file_name("fedora", "41.20251125.0", FILENAME_PRIORITY_SECONDARY);
+        assert_eq!(primary, "bootc_fedora-41.20251125.0-1.conf");
+        assert_eq!(secondary, "bootc_fedora-41.20251125.0-0.conf");
+
+        // Test os_id with hyphens (should be replaced with underscores)
+        let filename =
+            type1_entry_conf_file_name("fedora-coreos", "41.20251125.0", FILENAME_PRIORITY_PRIMARY);
+        assert_eq!(filename, "bootc_fedora_coreos-41.20251125.0-1.conf");
+
+        // Test multiple hyphens in os_id
+        let filename =
+            type1_entry_conf_file_name("my-custom-os", "1.0.0", FILENAME_PRIORITY_PRIMARY);
+        assert_eq!(filename, "bootc_my_custom_os-1.0.0-1.conf");
+
+        // Test rhel example
+        let filename = type1_entry_conf_file_name("rhel", "9.3.0", FILENAME_PRIORITY_SECONDARY);
+        assert_eq!(filename, "bootc_rhel-9.3.0-0.conf");
+    }
+
+    #[test]
+    fn test_grub_filename_parsing() {
+        // Verify our filename format works correctly with Grub's parsing logic
+        // Grub parses: bootc_fedora-41.20251125.0-1.conf
+        // Expected:
+        //   - name: bootc_fedora
+        //   - version: 41.20251125.0
+        //   - release: 1
+
+        // For fedora-coreos (with hyphens), we convert to underscores
+        let filename = type1_entry_conf_file_name("fedora-coreos", "41.20251125.0", "1");
+        assert_eq!(filename, "bootc_fedora_coreos-41.20251125.0-1.conf");
+
+        // Grub parsing simulation (from right):
+        // 1. Strip .conf -> bootc_fedora_coreos-41.20251125.0-1
+        // 2. Last '-' splits: release="1", remainder="bootc_fedora_coreos-41.20251125.0"
+        // 3. Second-to-last '-' splits: version="41.20251125.0", name="bootc_fedora_coreos"
+
+        let without_ext = filename.strip_suffix(".conf").unwrap();
+        let parts: Vec<&str> = without_ext.rsplitn(3, '-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "1"); // release
+        assert_eq!(parts[1], "41.20251125.0"); // version
+        assert_eq!(parts[2], "bootc_fedora_coreos"); // name
+    }
+
+    #[test]
+    fn test_sort_keys() {
+        // Test sort-key generation for systemd-boot
+        let primary = primary_sort_key("fedora");
+        let secondary = secondary_sort_key("fedora");
+
+        assert_eq!(primary, "bootc-fedora-0");
+        assert_eq!(secondary, "bootc-fedora-1");
+
+        // Systemd-boot sorts ascending, so "bootc-fedora-0" < "bootc-fedora-1"
+        assert!(primary < secondary);
+
+        // Test with hyphenated os_id (sort-key keeps hyphens)
+        let primary_coreos = primary_sort_key("fedora-coreos");
+        assert_eq!(primary_coreos, "bootc-fedora-coreos-0");
+    }
+
+    #[test]
+    fn test_filename_sorting_grub_style() {
+        // Simulate Grub's descending sort by (name, version, release)
+
+        // Test 1: Same version, different release (priority)
+        let primary =
+            type1_entry_conf_file_name("fedora", "41.20251125.0", FILENAME_PRIORITY_PRIMARY);
+        let secondary =
+            type1_entry_conf_file_name("fedora", "41.20251125.0", FILENAME_PRIORITY_SECONDARY);
+
+        // Descending sort: "bootc_fedora-41.20251125.0-1" > "bootc_fedora-41.20251125.0-0"
+        assert!(
+            primary > secondary,
+            "Primary should sort before secondary in descending order"
+        );
+
+        // Test 2: Different versions
+        let newer =
+            type1_entry_conf_file_name("fedora", "42.20251125.0", FILENAME_PRIORITY_PRIMARY);
+        let older =
+            type1_entry_conf_file_name("fedora", "41.20251125.0", FILENAME_PRIORITY_PRIMARY);
+
+        // Descending sort: version "42" > "41"
+        assert!(
+            newer > older,
+            "Newer version should sort before older in descending order"
+        );
+
+        // Test 3: Different os_id (different name)
+        let fedora = type1_entry_conf_file_name("fedora", "41.0", FILENAME_PRIORITY_PRIMARY);
+        let rhel = type1_entry_conf_file_name("rhel", "9.0", FILENAME_PRIORITY_PRIMARY);
+
+        // Names differ: bootc_rhel > bootc_fedora (descending alphabetical)
+        assert!(
+            rhel > fedora,
+            "RHEL should sort before Fedora in descending order"
+        );
+    }
+
+    /// A distinct, non-`EMPTY` digest to use as "the other" digest in
+    /// `resolve_boot_image_match` tests.
+    fn other_digest() -> Sha512HashValue {
+        Sha512HashValue::from_hex("aa".repeat(64)).unwrap()
+    }
+
+    fn uki_v1(digest: Sha512HashValue, insecure: bool) -> String {
+        ComposefsBootCmdline::new_v1(digest, insecure).to_cmdline_arg()
+    }
+
+    /// The bare legacy `composefs=<hex>` spelling.
+    fn uki_v2(digest: Sha512HashValue, insecure: bool) -> String {
+        ComposefsBootCmdline::new_v2(digest, insecure).to_cmdline_arg()
+    }
+
+    fn uki_explicit_v2(digest: &Sha512HashValue) -> String {
+        format!("composefs.digest=v2-sha512-12:{}", digest.to_hex())
+    }
+
+    fn candidate(format: UkiCandidateFormat, digest: Sha512HashValue) -> UkiComposefsCandidate {
+        UkiComposefsCandidate {
+            digest,
+            insecure: false,
+            format,
+        }
+    }
+
+    #[test]
+    fn test_uki_composefs_candidates() {
+        let v1 = Sha512HashValue::EMPTY;
+        let v2 = other_digest();
+        let secure = format!(
+            "{} {}",
+            uki_v1(v1.clone(), false),
+            uki_v2(v2.clone(), false)
+        );
+        let insecure = format!("{} {}", uki_v1(v1.clone(), true), uki_v2(v2.clone(), true));
+        let cases = [
+            ("secure dual", secure.clone(), true),
+            (
+                "secure dual reversed",
+                format!(
+                    "{} {}",
+                    uki_v2(v2.clone(), false),
+                    uki_v1(v1.clone(), false)
+                ),
+                true,
+            ),
+            ("insecure dual", insecure, true),
+            (
+                "insecure dual reversed",
+                format!("{} {}", uki_v2(v2.clone(), true), uki_v1(v1.clone(), true)),
+                true,
+            ),
+            (
+                "stale secondary",
+                format!(
+                    "{} {}",
+                    uki_v1(v1.clone(), false),
+                    uki_v2(Sha512HashValue::from_hex("bb".repeat(64)).unwrap(), false)
+                ),
+                true,
+            ),
+            (
+                "swapped digests",
+                format!(
+                    "{} {}",
+                    uki_v1(v2.clone(), false),
+                    uki_v2(v1.clone(), false)
+                ),
+                true,
+            ),
+            (
+                "mixed policy",
+                format!("{} {}", uki_v1(v1.clone(), false), uki_v2(v2.clone(), true)),
+                false,
+            ),
+            (
+                "malformed secondary",
+                format!("{} composefs=not-a-digest", uki_v1(v1.clone(), false)),
+                false,
+            ),
+            (
+                "malformed sha512 descriptor",
+                "composefs.digest=v1-sha512-12:bad".to_string(),
+                false,
+            ),
+            (
+                "explicit V2 descriptor",
+                format!("composefs.digest=v2-sha512-12:{}", v2.to_hex()),
+                true,
+            ),
+            (
+                "duplicate V2 key",
+                format!(
+                    "{} {}",
+                    uki_v2(v2.clone(), false),
+                    uki_v2(v2.clone(), false)
+                ),
+                false,
+            ),
+            ("missing value", "composefs".to_string(), false),
+            ("no candidates", "quiet rw".to_string(), false),
+        ];
+
+        for (name, cmdline, should_pass) in cases {
+            let result = parse_uki_composefs_candidates(&cmdline).and_then(|candidates| {
+                uki_candidates_policy(&candidates)?;
+                Ok(candidates)
+            });
+            assert_eq!(result.is_ok(), should_pass, "case {name}: {result:?}");
+        }
+        // Only the explicit descriptor identifies V2; the bare key has
+        // carried both V1 and V2 digests in released UKIs.
+        for (cmdline, format) in [
+            (uki_explicit_v2(&v2), UkiCandidateFormat::V2),
+            (uki_v1(v1.clone(), false), UkiCandidateFormat::V1),
+            (uki_v2(v2.clone(), false), UkiCandidateFormat::Unspecified),
+        ] {
+            let candidates = parse_uki_composefs_candidates(&cmdline).unwrap();
+            let formats = candidates.iter().map(|c| c.format).collect::<Vec<_>>();
+            assert_eq!(formats, [format], "{cmdline}");
+        }
+        let candidates = parse_uki_composefs_candidates(&format!(
+            "composefs.digest=v1-sha256-12:{} {} {}",
+            "aa".repeat(32),
+            uki_v1(v1.clone(), false),
+            uki_v2(v2.clone(), false)
+        ))
+        .unwrap();
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.digest.clone())
+                .collect::<Vec<_>>(),
+            vec![v1.clone(), v2.clone()]
+        );
+
+        let expected = ExpectedBootImageIds {
+            v1: vec![v1.clone()],
+            v2: vec![v2.clone()],
+        };
+        for (name, cmdline, valid) in [
+            ("valid dual", secure, true),
+            ("legacy V1", uki_v2(v1.clone(), false), true),
+            ("legacy V2", uki_v2(v2.clone(), false), true),
+            ("explicit V2", uki_explicit_v2(&v2), true),
+            ("explicit V2 naming V1 image", uki_explicit_v2(&v1), false),
+            (
+                "stale secondary",
+                format!(
+                    "{} {}",
+                    uki_v1(v1.clone(), false),
+                    uki_v2(Sha512HashValue::from_hex("bb".repeat(64)).unwrap(), false)
+                ),
+                false,
+            ),
+            (
+                "swapped digests",
+                format!(
+                    "{} {}",
+                    uki_v1(v2.clone(), false),
+                    uki_v2(v1.clone(), false)
+                ),
+                false,
+            ),
+        ] {
+            let candidates = parse_uki_composefs_candidates(&cmdline).unwrap();
+            assert_eq!(
+                validate_uki_candidates(&candidates, &expected, Some("uki.efi".into())).is_ok(),
+                valid,
+                "case {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_boot_image_match() {
+        let expected = other_digest();
+        let uki_name = "uki.efi";
+        // 2 xattr filtering modes x 2 EROFS format versions.
+        let combinations_tried = 4;
+
+        #[derive(Copy, Clone)]
+        enum FindMatching {
+            Found,
+            NotFound,
+            Errors,
+        }
+
+        let cases = [
+            (FindMatching::Found, true, vec![]),
+            (
+                FindMatching::NotFound,
+                false,
+                vec![
+                    uki_name.into(),
+                    format!("{expected:?}"),
+                    format!("doesn't match any of {combinations_tried} supported"),
+                ],
+            ),
+            (
+                FindMatching::Errors,
+                false,
+                vec![
+                    "search blew up".to_string(),
+                    "Searching for a boot image xattr filtering mode/format version matching \
+                     the UKI digest"
+                        .to_string(),
+                ],
+            ),
+        ];
+
+        for (find_matching, should_succeed, want_substrings) in cases {
+            let find_matching_result = match find_matching {
+                FindMatching::Found => Ok(composefs_oci::BootImageMatch::Found {
+                    mode: composefs_oci::XattrFiltering::KeepUserXattrs,
+                    version: FormatVersion::V2,
+                    digest: expected.clone(),
+                }),
+                FindMatching::NotFound => {
+                    Ok(composefs_oci::BootImageMatch::NotFound(combinations_tried))
+                }
+                FindMatching::Errors => Err(anyhow::anyhow!("search blew up")),
+            };
+            let mismatch =
+                UKIDigestMismatch::unsupported_compatibility(expected.clone(), uki_name.into(), 0);
+            let candidate = candidate(UkiCandidateFormat::V2, expected.clone());
+            let result = resolve_boot_image_match(mismatch, &candidate, find_matching_result);
+            if should_succeed {
+                assert_eq!(result.unwrap(), (FormatVersion::V2, expected.clone()));
+                continue;
+            }
+            let error = result.unwrap_err();
+            let msg = format!("{error:#}");
+            for want in &want_substrings {
+                assert!(msg.contains(want), "expected {msg:?} to contain {want:?}");
+            }
+            if matches!(find_matching, FindMatching::NotFound) {
+                let mismatch = error.downcast_ref::<UKIDigestMismatch>().unwrap();
+                assert_eq!(mismatch.uki_name(), Some(uki_name));
+            } else {
+                assert!(error.downcast_ref::<UKIDigestMismatch>().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_expected_boot_image_ids_keep_recovered_ids_by_format() {
+        let standard_v1 = Sha512HashValue::EMPTY;
+        let standard_v2 = other_digest();
+        let recovered_v1 = Sha512HashValue::from_hex("bb".repeat(64)).unwrap();
+        let recovered_v2 = Sha512HashValue::from_hex("cc".repeat(64)).unwrap();
+
+        let mut ids = expected_boot_image_ids(
+            Some(standard_v1.clone()),
+            Some(standard_v2.clone()),
+            &recovered_v1,
+            FormatVersion::V1,
+        );
+        ids.add(FormatVersion::V2, recovered_v2.clone());
+
+        for candidate in [
+            candidate(UkiCandidateFormat::V1, standard_v1),
+            candidate(UkiCandidateFormat::V1, recovered_v1),
+            candidate(UkiCandidateFormat::V2, standard_v2),
+            candidate(UkiCandidateFormat::V2, recovered_v2),
+        ] {
+            assert!(ids.contains(&candidate), "{candidate:?}");
+        }
+    }
+
+    /// End-to-end candidate reconciliation for the UKI spellings bootc has
+    /// shipped; `generated` are the boot images this pull produced and
+    /// `searchable` what the xattr/format search would find.
+    #[test]
+    fn test_reconcile_uki_candidates() {
+        use FormatVersion::{V1, V2};
+        let v1 = Sha512HashValue::from_hex("11".repeat(64)).unwrap();
+        let v2 = Sha512HashValue::from_hex("22".repeat(64)).unwrap();
+        let unknown = Sha512HashValue::from_hex("33".repeat(64)).unwrap();
+        let dual = format!(
+            "{} {}",
+            uki_v1(v1.clone(), false),
+            uki_v2(v2.clone(), false)
+        );
+        let dual_reversed = format!(
+            "{} {}",
+            uki_v2(v2.clone(), false),
+            uki_v1(v1.clone(), false)
+        );
+
+        /// Boot images as `(format, digest)`.
+        type Images<'a> = &'a [(FormatVersion, &'a Sha512HashValue)];
+        /// `(name, cmdline, generated, searchable, selected digest or error)`
+        type Case<'a> = (
+            &'a str,
+            String,
+            Images<'a>,
+            Images<'a>,
+            Result<&'a Sha512HashValue, &'a str>,
+        );
+        let cases: &[Case] = &[
+            // bootc 1.16.4+: V1 under the bare key.
+            (
+                "legacy V1",
+                uki_v2(v1.clone(), false),
+                &[(V1, &v1)],
+                &[],
+                Ok(&v1),
+            ),
+            (
+                "legacy V1 recovered",
+                uki_v2(v1.clone(), false),
+                &[(V2, &v2)],
+                &[(V1, &v1)],
+                Ok(&v1),
+            ),
+            // bootc 1.16.3: V2 under the bare key.
+            (
+                "legacy V2",
+                uki_v2(v2.clone(), false),
+                &[(V1, &v1), (V2, &v2)],
+                &[],
+                Ok(&v2),
+            ),
+            (
+                "legacy V2 recovered",
+                uki_v2(v2.clone(), false),
+                &[(V1, &v1)],
+                &[(V2, &v2)],
+                Ok(&v2),
+            ),
+            ("dual", dual.clone(), &[(V1, &v1), (V2, &v2)], &[], Ok(&v1)),
+            (
+                "dual reversed",
+                dual_reversed,
+                &[(V1, &v1), (V2, &v2)],
+                &[],
+                Ok(&v1),
+            ),
+            (
+                "dual recovered V2",
+                dual,
+                &[(V1, &v1)],
+                &[(V2, &v2)],
+                Ok(&v1),
+            ),
+            (
+                "explicit V2",
+                uki_explicit_v2(&v2),
+                &[(V2, &v2)],
+                &[],
+                Ok(&v2),
+            ),
+            (
+                "explicit V2 naming V1 image",
+                uki_explicit_v2(&v1),
+                &[(V1, &v1)],
+                &[(V1, &v1)],
+                Err("candidate format (V2) does not match recovered EROFS format (V1)"),
+            ),
+            (
+                "explicit V1 naming V2 image",
+                uki_v1(v2.clone(), false),
+                &[(V2, &v2)],
+                &[(V2, &v2)],
+                Err("candidate format (V1) does not match recovered EROFS format (V2)"),
+            ),
+            (
+                "legacy unknown",
+                uki_v2(unknown.clone(), false),
+                &[(V1, &v1), (V2, &v2)],
+                &[],
+                Err("doesn't match any of"),
+            ),
+        ];
+
+        for (name, cmdline, generated, searchable, want) in cases {
+            let mut ids = ExpectedBootImageIds::default();
+            for (version, digest) in generated.iter() {
+                ids.add(*version, (*digest).clone());
+            }
+            let expected = ExpectedComposefsDigest {
+                candidates: parse_uki_composefs_candidates(cmdline).unwrap(),
+                uki_name: "uki.efi".into(),
+            };
+            let result = reconcile_uki_candidates(&expected, ids, |wanted| {
+                Ok(searchable
+                    .iter()
+                    .find(|(_, digest)| *digest == wanted)
+                    .map_or(composefs_oci::BootImageMatch::NotFound(4), |(v, d)| {
+                        composefs_oci::BootImageMatch::Found {
+                            mode: composefs_oci::XattrFiltering::KeepUserXattrs,
+                            version: *v,
+                            digest: (*d).clone(),
+                        }
+                    }))
+            });
+            match (result, want) {
+                (Ok(recovered), Ok(want)) => {
+                    assert_eq!(&recovered.id, *want, "case {name}");
+                    // Everything the UKI names must now validate at ESP-write time.
+                    validate_uki_candidates(&expected.candidates, &recovered.expected_ids, None)
+                        .unwrap_or_else(|e| panic!("case {name}: {e:#}"));
+                }
+                (Err(e), Err(want)) => {
+                    let msg = format!("{e:#}");
+                    assert!(msg.contains(want), "case {name}: {msg:?} lacks {want:?}");
+                }
+                (result, _) => panic!("case {name}: unexpected {:?}", result.map(|r| r.id)),
+            }
+        }
+    }
+}
