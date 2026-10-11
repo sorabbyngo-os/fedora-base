@@ -1,0 +1,68 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  annotations:
+    build.appstudio.openshift.io/repo: https://gitlab.com/fedora/bootc/base-images/-/tree/{{revision}}
+    build.appstudio.redhat.com/commit_sha: '{{revision}}'
+    build.appstudio.redhat.com/target_branch: '{{target_branch}}'
+    pipelinesascode.tekton.dev/cancel-in-progress: "false"
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      (
+        (event == "push" && target_branch == "main")
+      ) && (
+        ".tekton/fedora-bootc-45-minimal-push.yaml".pathChanged() ||
+        "Containerfile".pathChanged() ||
+        "bootc-base-imagectl".pathChanged() ||
+        "install-manifests".pathChanged() ||
+        "fedora-includes/generic.yaml".pathChanged() ||
+        "minimal.yaml".pathChanged() ||
+        "minimal/***".pathChanged()
+      )
+    test.appstudio.openshift.io/comment_strategy: "disable_all"
+  creationTimestamp: null
+  labels:
+    appstudio.openshift.io/application: fedora-bootc-45
+    appstudio.openshift.io/component: fedora-bootc-45-minimal
+    pipelines.appstudio.openshift.io/type: build
+  name: fedora-bootc-45-minimal-on-push
+spec:
+  params:
+  - name: git-url
+    value: '{{source_url}}'
+  - name: revision
+    value: '{{revision}}'
+  - name: build-platforms
+    value:
+    - linux/amd64
+    - linux/arm64
+    - linux/ppc64le
+    - linux/s390x
+  - name: dockerfile
+    value: Containerfile
+  - name: path-context
+    value: .
+  - name: privileged-nested
+    value: true
+  - name: build-args
+    value:
+    - REPOS_IMAGE=quay.io/bootc-devel/fedora-bootc-45-compose:Fedora-45-20261006.n.0@sha256:88032b2e53db9c2dfdc7ac43fbcb75802051c9329d1e5d939d4c41f28cfbd7db
+    - MANIFEST=fedora-minimal
+  - name: output-image
+    value: quay.io/konflux-fedora/bootc-tenant/fedora-bootc-45-minimal:{{revision}}
+  - name: labels
+    value:
+      - org.opencontainers.image.version=45
+  pipelineRef:
+    params:
+    - name: bundle
+      value: quay.io/bootc-devel/tekton-catalog/pipeline-buildah-build-bootc-multi-platform-oci-ta@sha256:6959fc0e44ecb30423ccce73720f7d3f5993a96495ee7f4ef8c86fa6ab112e90
+    - name: name
+      value: buildah-build-bootc-multi-platform-oci-ta
+    - name: kind
+      value: pipeline
+    resolver: bundles
+  timeouts:
+    pipeline: 6h
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-fedora-bootc-45-minimal

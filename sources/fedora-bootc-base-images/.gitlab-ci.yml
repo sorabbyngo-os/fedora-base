@@ -1,0 +1,60 @@
+---
+# CI for fedora-bootc base images.
+#
+# All build and test logic lives in the Justfile so that CI flows
+# are easily replicable locally: just install `just` and run the
+# same targets that CI does.
+workflow:
+  rules:
+    # Skip CI if only non-build files changed
+    - changes:
+        - renovate.json
+        - README.md
+        - LICENSE
+        - .tekton/*
+      when: never
+    - when: always
+
+stages:
+  - build
+
+variables:
+  BUILDER: buildah
+  JUST_VERSION: "1.49.0"
+
+.build-image:
+  stage: build
+  image: quay.io/buildah/stable:v1.42.2
+  needs: []
+  before_script:
+    # just is not packaged in the buildah image; grab a pinned static binary
+    - curl -sSfL -o /tmp/just.tar.gz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+    - tar -xzf /tmp/just.tar.gz -C /usr/local/bin just
+
+basic-checks:
+  stage: build
+  image: quay.io/fedora/fedora:latest
+  needs: []
+  script: |
+    set -xeuo pipefail
+    dnf install -y file jq python3-yaml ShellCheck just
+    just validate
+
+# Test each tier against rawhide and the latest stable release
+build-and-test:
+  extends: .build-image
+  parallel:
+    matrix:
+      - FEDORA_VERSION: [rawhide, "44"]
+        TIER: [minimal, minimal-plus, standard]
+  script:
+    - just test
+
+# Smoke-test older Fedora versions (standard tier, build only)
+build-fedora-version:
+  extends: .build-image
+  parallel:
+    matrix:
+      - FEDORA_VERSION: ["43"]
+  script:
+    - just build
