@@ -1,0 +1,134 @@
+#!/bin/bash
+
+set -eux
+set -o pipefail
+
+# Switch SELinux to permissive if possible, since the tests don't set proper contexts
+setenforce 0 || true
+
+echo "CPU and Memory information:"
+lscpu
+lsmem
+
+echo "Clock source: $(cat /sys/devices/system/clocksource/clocksource0/current_clocksource)"
+
+# Bump inotify limits if we can so nspawn containers don't run out of inotify file descriptors.
+sysctl fs.inotify.max_user_watches=65536 || true
+sysctl fs.inotify.max_user_instances=1024 || true
+
+if [[ -n "${KOJI_TASK_ID:-}" ]]; then
+    koji download-task --noprogress --arch="noarch,$(rpm --eval '%{_arch}')" "$KOJI_TASK_ID"
+elif [[ -n "${CBS_TASK_ID:-}" ]]; then
+    cbs download-task --noprogress --arch="noarch,$(rpm --eval '%{_arch}')" "$CBS_TASK_ID"
+elif [[ -n "${PACKIT_SRPM_URL:-}" ]]; then
+    COPR_BUILD_ID="$(basename "$(dirname "$PACKIT_SRPM_URL")")"
+    COPR_CHROOT="$(basename "$(dirname "$(dirname "$PACKIT_BUILD_LOG_URL")")")"
+    copr download-build --rpms --chroot "$COPR_CHROOT" "$COPR_BUILD_ID"
+    mv "$COPR_CHROOT"/* .
+else
+    echo "Not running within packit and no CBS/koji task ID provided"
+    exit 1
+fi
+
+PACKAGEDIR="$PWD"
+
+# This will match both the regular and the debuginfo rpm so make sure we select only the
+# non-debuginfo rpm.
+RPMS=(systemd-tests-*.rpm)
+rpm2cpio "${RPMS[0]}" | cpio --make-directories --extract
+pushd usr/lib/systemd/tests
+mkosi_hash="$(grep "MinimumVersion=commit:" mkosi/mkosi.conf | sed "s|MinimumVersion=commit:||g")"
+
+# Now prepare mkosi at the same version required by the systemd repo.
+git clone https://github.com/systemd/mkosi /var/tmp/systemd-integration-tests-mkosi
+git -C /var/tmp/systemd-integration-tests-mkosi checkout "$mkosi_hash"
+
+export PATH="/var/tmp/systemd-integration-tests-mkosi/bin:$PATH"
+
+# shellcheck source=/dev/null
+. /etc/os-release || . /usr/lib/os-release
+
+tee mkosi/mkosi.local.conf <<EOF
+[Distribution]
+Distribution=${MKOSI_DISTRIBUTION:-$ID}
+Release=${MKOSI_RELEASE:-${VERSION_ID:-rawhide}}
+
+[Content]
+PackageDirectories=$PACKAGEDIR
+SELinuxRelabel=yes
+
+[Build]
+ToolsTreeDistribution=${MKOSI_DISTRIBUTION:-$ID}
+ToolsTreeRelease=${MKOSI_RELEASE:-${VERSION_ID:-rawhide}}
+ToolsTreePackageDirectories=$PACKAGEDIR
+Environment=NO_BUILD=1
+WithTests=yes
+EOF
+
+if [[ -n "${MKOSI_REPOSITORIES:-}" ]]; then
+    tee --append mkosi/mkosi.local.conf <<EOF
+[Distribution]
+Repositories=$MKOSI_REPOSITORIES
+
+[Build]
+ToolsTreeRepositories=$MKOSI_REPOSITORIES
+EOF
+fi
+
+if [[ -n "${TEST_SELINUX_CHECK_AVCS:-}" ]]; then
+    tee --append mkosi/mkosi.local.conf <<EOF
+[Runtime]
+KernelCommandLineExtra=systemd.setenv=TEST_SELINUX_CHECK_AVCS=$TEST_SELINUX_CHECK_AVCS
+EOF
+fi
+
+# If we don't have KVM, skip running in qemu, as it's too slow. But try to load the module first.
+modprobe kvm || true
+if [[ ! -e /dev/kvm ]]; then
+    export TEST_NO_QEMU=1
+fi
+
+NPROC="$(nproc)"
+if [[ "$NPROC" -gt 4 ]]; then
+    # Cap the number of parallel tests to 4 to not overwhelm larger hosts
+    NPROC=4
+fi
+
+# Workaround for a kernel 7.x virtio/vsock bug, where a patch for a potential overflow inadvertently shrunk
+# the receive buffer's effective size below what was configured, which eventually causes the vsock connection
+# to get reset with ENOBUFS, that kills the journal forwarding over vsock
+#
+# Pending fix: https://lore.kernel.org/netdev/20260518090656.134588-3-sgarzare@redhat.com/
+sysctl -w net.core.rmem_max=16777216
+sysctl -w net.core.wmem_max=16777216
+
+# This test is only really useful if we're building with sanitizers and takes a long time, so let's skip it
+# for now.
+export TEST_SKIP="TEST-21-DFUZZER ${TEST_SKIP:-}"
+export TEST_JOURNAL_USE_TMP=1
+
+mkosi genkey
+mkosi summary
+mkosi -f box -- true
+mkosi box -- meson setup build integration-tests/standalone
+mkosi -f
+if [[ "$(mkosi box -- meson test --help)" == *"--max-lines"* ]]; then
+    MAX_LINES=(--max-lines 300)
+else
+    MAX_LINES=()
+fi
+mkosi box -- \
+    meson test \
+        -C build \
+        --setup=integration \
+        --print-errorlogs \
+        --no-stdsplit \
+        --num-processes "$NPROC" \
+        "${MAX_LINES[@]}" && EC=0 || EC=$?
+
+[[ -d build/meson-logs ]] && find build/meson-logs -type f -exec mv {} "$TMT_TEST_DATA" \;
+[[ -d build/test/journal ]] && find build/test/journal -type f -exec mv {} "$TMT_TEST_DATA" \;
+
+popd
+
+exit "$EC"
