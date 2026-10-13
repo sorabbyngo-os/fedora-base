@@ -1,0 +1,6 @@
+[submodule "sources/ostree"]
+	path = sources/ostree
+	url = https://github.com/ostreedev/ostree.git
+[submodule "sources/rpm-ostree"]
+	path = sources/rpm-ostree
+	url = https://github.com/coreos/rpm-ostree.git

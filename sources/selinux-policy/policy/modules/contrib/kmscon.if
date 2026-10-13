@@ -1,0 +1,43 @@
+## <summary>Terminal emulator for Linux graphical console</summary>
+
+########################################
+## <summary>
+##	Execute kmscon in the kmscon domain.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed to transition.
+##	</summary>
+## </param>
+#
+interface(`kmscon_systemctl',`
+	gen_require(`
+		type kmscon_unit_file_t;
+		type kmscon_t;
+	')
+
+	systemd_exec_systemctl($1)
+	init_reload_services($1)
+	allow $1 kmscon_unit_file_t:file read_file_perms;
+	allow $1 kmscon_unit_file_t:service manage_service_perms;
+
+	ps_process_pattern($1, kmscon_t)
+')
+
+########################################
+## <summary>
+##	Read/write kmscon devpts chr files.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`kmscon_rw_inherited_devpts_chr_files',`
+	gen_require(`
+		type kmscon_devpts_t;
+	')
+
+	allow $1 kmscon_devpts_t:chr_file rw_inherited_chr_file_perms;
+')
