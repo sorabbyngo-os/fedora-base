@@ -1,0 +1,16 @@
+ostree
+bootc
+systemd
+systemd-udev
+NetworkManager
+selinux-policy
+selinux-policy-targeted
+policycoreutils
+policycoreutils-python-utils
+passwd
+shadow-utils
+sudo
+curl
+ca-certificates
+vim-minimal
+less

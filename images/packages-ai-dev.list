@@ -1,0 +1,8 @@
+git
+gcc
+make
+rust
+cargo
+clang
+pkgconf
+openssl-devel

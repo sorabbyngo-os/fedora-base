@@ -1,0 +1,7 @@
+NAME="Sorabbyngo OS"
+ID=sorabbyngo
+ID_LIKE="fedora"
+VERSION_ID="0.1"
+PRETTY_NAME="Sorabbyngo OS 0.1 (pre-alpha)"
+HOME_URL="https://github.com/sorabbyngo-os"
+BUG_REPORT_URL="https://github.com/sorabbyngo-os/sorabbyngo-os/issues"

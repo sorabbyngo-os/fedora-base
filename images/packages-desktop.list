@@ -1,0 +1,11 @@
+mesa-dri-drivers
+mesa-vulkan-drivers
+libinput
+pipewire
+pipewire-pulseaudio
+wireplumber
+alsa-utils
+xdg-desktop-portal
+fontconfig
+dejavu-sans-fonts
+google-noto-sans-fonts
