@@ -1,0 +1,280 @@
+#!/bin/bash
+## kola:
+##   # Increase timeout since this test involves rebasing, container operations,
+##   # kernel override/reset, and upgrade tests which require additional reboots
+##   timeoutMin: 45
+##   # This test only runs on FCOS
+##   distros: fcos
+##   # Needs internet access for package installation and koji access
+##   tags: "needs-internet platform-independent"
+##   minMemory: 2048
+##   # Need extra disk for multiple container builds and ostree deployments
+##   minDisk: 20
+#
+# Copyright (C) 2025 Red Hat, Inc.
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the
+# Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+# Boston, MA 02111-1307, USA.
+
+set -euo pipefail
+
+. ${KOLA_EXT_DATA}/libtest.sh
+
+set -x
+
+cd "$(mktemp -d)"
+
+# Get Fedora version and set up kernel override URLs
+. /etc/os-release
+case "$VERSION_ID" in
+  44)
+    # kernel-7.0.10-200.fc44 (coreos-pool, differs from image's -201)
+    koji_kernel_url="https://koji.fedoraproject.org/koji/buildinfo?buildID=3001196"
+    kernel_release=7.0.10-200.fc44.x86_64
+    ;;
+  43)
+    # kernel-7.0.10-100.fc43 (f43-updates, differs from latest -101)
+    koji_kernel_url="https://koji.fedoraproject.org/koji/buildinfo?buildID=3001197"
+    kernel_release=7.0.10-100.fc43.x86_64
+    ;;
+  *)
+    echo "Unsupported Fedora version: $VERSION_ID"
+    exit 1
+    ;;
+esac
+
+# TODO: It'd be much better to test this via a registry
+image_dir=/var/tmp/fcos
+image=oci:$image_dir
+
+# Helper function to build a derived container image with a version label.
+# This encapsulates the current ostree commit into a container image,
+# adds vim-enhanced to the base, and tags it with the given version.
+# Usage: build_derived_image <version_label>
+build_derived_image() {
+  local version_label="${1}"
+
+  local checksum
+  checksum=$(rpm-ostree status --json | jq -r '.deployments[0].checksum')
+  rm -rf "${image_dir}"
+  ostree container encapsulate --repo=/ostree/repo "${checksum}" \
+    "${image}" --label ostree.bootable=TRUE
+
+  skopeo copy "${image}" containers-storage:localhost/fcos
+  rm -rf "${image_dir}"
+
+  local td
+  td=$(mktemp -d)
+  (
+    cd "${td}"
+
+    cat > Containerfile << EOF
+FROM localhost/fcos
+RUN dnf install -y vim-enhanced
+LABEL org.opencontainers.image.version "${version_label}"
+EOF
+
+    local touched_resolv_conf=0
+    if test '!' -f /etc/resolv.conf; then
+      local podmanv
+      podmanv=$(podman --version)
+      case "${podmanv#podman version }" in
+        3.*) touched_resolv_conf=1; touch /etc/resolv.conf;;
+      esac
+    fi
+    podman build --net=host -t localhost/fcos-derived --squash .
+    if test "${touched_resolv_conf}" -eq 1; then
+      rm -vf /etc/resolv.conf
+    fi
+  )
+  rm -rf "${td}"
+}
+
+case "${AUTOPKGTEST_REBOOT_MARK:-}" in
+  "")
+    # Since we're switching OS update stream, turn off zincati
+    systemctl mask --now zincati
+
+    # Build initial derived image with version 1
+    build_derived_image 1
+
+    rpm-ostree rebase ostree-unverified-image:containers-storage:localhost/fcos-derived
+
+    /tmp/autopkgtest-reboot 1
+    ;;
+  1)
+    # Verify vim is installed from the base image
+    rpm -q vim-enhanced
+    rpm-ostree status
+
+    # Test 1: Install with --idempotent should succeed without error
+    # even though vim-enhanced is already in the base image
+    rpm-ostree install --allow-inactive --idempotent --apply-live -y vim-enhanced
+    echo "ok idempotent install of existing package"
+
+
+    # Test 2: Install with --unchanged-exit-77 should exit with 77
+    # Note: --idempotent is needed because Test 1 already added vim-enhanced to requested-packages
+    set +e
+    rpm-ostree install --allow-inactive --idempotent --apply-live --unchanged-exit-77 -y vim-enhanced 2>&1 | tee out.txt
+    rc=$?
+    set -e
+    assert_streq "${rc}" "77"
+    echo "ok unchanged-exit-77 for existing package"
+
+    # Test 2.5: Install without --idempotent when package is already requested
+    # Should fail gracefully with "already requested" error, not crash
+    set +e
+    rpm-ostree install --allow-inactive --apply-live --unchanged-exit-77 -y vim-enhanced 2>&1 | tee out.txt
+    rc=$?
+    set -e
+    assert_streq "${rc}" "1"
+    assert_file_has_content out.txt "already requested"
+    echo "ok install without --idempotent correctly rejects already-requested package"
+
+    # Test 3: Install with both --idempotent and --unchanged-exit-77
+    set +e
+    rpm-ostree install --allow-inactive --idempotent --apply-live --unchanged-exit-77 -y vim-enhanced
+    rc=$?
+    set -e
+    assert_streq "${rc}" "77"
+    echo "ok idempotent with unchanged-exit-77 for existing package"
+
+    # Test 4: Install a new package with --idempotent (should work normally)
+    rpm-ostree install --idempotent tmux
+    /tmp/autopkgtest-reboot 2
+    ;;
+  2)
+    # Verify tmux is now installed
+    rpm -q tmux
+    rpm -q vim-enhanced
+    echo "ok idempotent install of new package"
+
+    # Test 5: Override kernel on container-based deployment
+    # This tests that override replace works on container-based systems
+    current_kernel=$(uname -r)
+    echo "Current kernel: ${current_kernel}"
+
+    # Fail if already on target kernel - we need to test the override/reset flow
+    if [[ "${current_kernel}" == "${kernel_release}" ]]; then
+      fatal "Cannot test kernel override: current kernel ${current_kernel} already matches target ${kernel_release}"
+    fi
+    rpm-ostree override replace "${koji_kernel_url}"
+    rpmostree_assert_status '.deployments[0]["base-local-replacements"]|length > 0'
+    echo "ok kernel override on container-based deployment"
+
+    /tmp/autopkgtest-reboot 3
+    ;;
+  3)
+    # Verify override was applied
+    current_kernel=$(uname -r)
+    echo "Current kernel after reboot: ${current_kernel}"
+
+    # Test 6: Override reset --all on container-based deployment
+    # This is the critical test that was broken - override reset -a should
+    # actually stage a new deployment, not silently do nothing
+    echo "Testing override reset --all on container-based deployment..."
+
+    rpm-ostree override reset --all
+
+    # Verify that a new deployment was staged (not just silently returned)
+    # The pending deployment should have no overrides
+    # Note: We check >= 2 because ostree may keep additional rollback deployments
+    rpmostree_assert_status '.deployments|length >= 2'
+    rpmostree_assert_status '.deployments[0].staged == true'
+    rpmostree_assert_status '.deployments[0]["base-local-replacements"]|length == 0'
+    echo "ok override reset --all on container-based deployment"
+
+    /tmp/autopkgtest-reboot 4
+    ;;
+  4)
+    # Test 7: Upgrade with layered packages on container-based deployment
+    # This tests that rpm-ostree upgrade properly stages a new deployment
+    # when a new base container image is available (with layered packages).
+    # This is a regression test for https://github.com/coreos/rpm-ostree/issues/5567
+
+    # Verify current state: tmux is layered, no overrides
+    rpm -q tmux
+    rpm -q vim-enhanced
+    rpmostree_assert_status '.deployments[0]["base-local-replacements"]|length == 0'
+    rpmostree_assert_status '.deployments[0]["requested-packages"]|length > 0'
+    echo "Verified: tmux is layered, no overrides remain"
+
+    # Build a new version of the container image (version 2)
+    # This simulates a new upstream image becoming available
+    build_derived_image 2
+
+    # Run rpm-ostree upgrade - this should stage a new deployment
+    rpm-ostree upgrade
+
+    # Verify that a new deployment was staged
+    rpmostree_assert_status '.deployments|length >= 2'
+    rpmostree_assert_status '.deployments[0].staged == true'
+    # Verify the version changed to confirm the new image was deployed
+    rpmostree_assert_status '.deployments[0].version == "2"'
+    echo "ok upgrade with layered packages on container-based deployment"
+
+    /tmp/autopkgtest-reboot 5
+    ;;
+  5)
+    # Test 8: Upgrade WITHOUT layered packages on container-based deployment
+    # This is the EXACT scenario from https://github.com/coreos/rpm-ostree/issues/5567
+    # A container-based system with NO layered packages should still properly
+    # stage a new deployment when a new base image is available.
+
+    # First, remove any leftover layered package requests from previous phases.
+    # tmux and vim-enhanced are inactive (already in base), so we clean up
+    # all pending requests to get a pristine container-based deployment.
+    rpm-ostree cleanup -p
+    rpm-ostree reset
+
+    # Verify current state: no layered packages
+    rpm -q vim-enhanced
+    rpmostree_assert_status '(.deployments[0]["requested-packages"] // []) | length == 0'
+    rpmostree_assert_status '(.deployments[0]["requested-local-packages"] // []) | length == 0'
+    echo "Verified: no layered packages, clean container-based deployment"
+
+    # Build another new version of the container image (version 3)
+    build_derived_image 3
+
+    # Run rpm-ostree upgrade - this MUST stage a new deployment
+    # Before the fix for #5567, this would silently return success without deploying
+    rpm-ostree upgrade
+
+    # Verify that a new deployment was staged (not silently returned)
+    rpmostree_assert_status '.deployments|length >= 2'
+    rpmostree_assert_status '.deployments[0].staged == true'
+    # Verify the version changed to confirm the new image was deployed
+    rpmostree_assert_status '.deployments[0].version == "3"'
+    echo "ok upgrade without layered packages on container-based deployment"
+
+    # Also verify that running upgrade again correctly reports no change
+    # (test the "already up to date" path still works)
+    rc=0
+    rpm-ostree upgrade --unchanged-exit-77 || rc=$?
+    assert_streq "${rc}" "77"
+    echo "ok upgrade --unchanged-exit-77 reports no change when already up to date"
+
+    # Test 9: Verify upgrade prints "No upgrade available." when already up to date
+    # Regression test for https://github.com/coreos/rpm-ostree/issues/5574
+    # Before this fix, container-based systems would exit silently with code 0
+    # without printing any message when no upgrade was available.
+    rpm-ostree upgrade 2>&1 | tee upgrade-output.txt
+    assert_file_has_content upgrade-output.txt "No upgrade available."
+    echo "ok upgrade prints 'No upgrade available.' on container-based system"
+
+    ;;
+  *) echo "unexpected mark: ${AUTOPKGTEST_REBOOT_MARK}"; exit 1;;
+esac

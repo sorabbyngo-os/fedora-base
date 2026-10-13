@@ -1,0 +1,89 @@
+// Documentation: https://github.com/coreos/coreos-ci/blob/main/README-upstream-ci.md
+
+properties([
+  // abort previous runs when a PR is updated to save resources
+  disableConcurrentBuilds(abortPrevious: true)
+])
+
+stage("Build") {
+parallel rpms: {
+  def n = 4
+  buildPod(memory: "6Gi", cpu: "${n}") {
+      checkout scm
+      // 2:1 job to CPU at most should keep us from getting kicked out
+      shwrap("""RPM_BUILD_NCPUS=${n} CARGO_BUILD_JOBS=${n} ./ci/coreosci-rpmbuild.sh""")
+      // make it easy for anyone to download the RPMs
+      archiveArtifacts '*.rpm'
+      stash excludes: '*-devel*.rpm,*.src.rpm', includes: '*.rpm', name: 'rpms'
+  }
+},
+codestyle: {
+  buildPod {
+      checkout scm
+      shwrap("""
+        # Ensures that we get refs to aid `git describe`
+        git fetch origin +refs/heads/main:refs/remotes/origin/main
+        ci/commit-validation.sh
+      """)
+  }
+}
+}
+
+def nhosts = 4
+// nb: the 1536 matches libvm.sh here
+def mem = (nhosts * 1536) + 512
+cosaPod(runAsUser: 0, memory: "${mem}Mi", cpu: "${nhosts}") {
+  stage("Unit Tests") {
+    checkout scm
+    unstash 'rpms'
+    // run this stage first without installing deps, so we match exactly the cosa pkgset
+    // (+ our built rpm-ostree)
+    shwrap("""
+      dnf install -y *.rpm
+      # Cross check we enabled the unit tests
+      rpm-ostree --version | grep bin-unit-tests
+      rpm-ostree testutils c-units
+    """)
+  }
+  stage("Build FCOS") {
+    shwrap("""
+      chown -R -h builder: .
+      runuser -u builder -- coreos-assembler init --force -b stable https://github.com/coreos/fedora-coreos-config
+      # include our built rpm-ostree in the image
+      mv *.rpm overrides/rpm
+      runuser -u builder -- coreos-assembler fetch
+      runuser -u builder -- coreos-assembler build
+      runuser -u builder -- coreos-assembler osbuild qemu
+    """)
+  }
+  stage("Install Deps") {
+    shwrap("ci/install-test-deps.sh")
+  }
+  stage("Kola") {
+    // TODO upstream this into coreos-ci-lib
+    shwrap("make -C tests/kolainst install")
+    kola(cosaDir: "${env.WORKSPACE}", extraArgs: "ext.rpm-ostree.*", parallel: nhosts)
+  }
+  stage("vmcheck") {
+    try {
+      timeout(time: 60, unit: 'MINUTES') {
+        shwrap("COSA_DIR=${env.WORKSPACE} JOBS=${nhosts} tests/vmcheck.sh")
+      }
+    } finally {
+      shwrap("""
+        if [ -d vmcheck-logs ]; then
+          tar -C vmcheck-logs -cf- . | xz -c9 > vmcheck-logs.tar.xz
+        fi
+      """)
+      archiveArtifacts allowEmptyArchive: true, artifacts: 'vmcheck-logs.tar.xz'
+    }
+  }
+  stage("kola-upgrades") {
+    unstash 'rpms'
+    shwrap("""
+      coreos-installer download -p qemu -f qcow2.xz -s testing --decompress
+      mv rpm-ostree-[0-9]*.rpm rpm-ostree-libs-[0-9]*.rpm /usr/lib/coreos-assembler/tests/kola/rpm-ostree/destructive/data/      
+    """)
+    kola(cosaDir: "${env.WORKSPACE}", skipUpgrade: true, extraArgs: "--qemu-image ./fedora-coreos*.qcow2 --tag rpm-ostree-upgrade")
+  }
+}

@@ -1,0 +1,6 @@
+[submodule "libglnx"]
+	path = libglnx
+	url = https://github.com/GNOME/libglnx.git
+[submodule "libdnf"]
+	path = libdnf
+	url = https://github.com/rpm-software-management/libdnf
