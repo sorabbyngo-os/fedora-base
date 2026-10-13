@@ -1,0 +1,222 @@
+RPMTEST_SETUP_RW([rpm v4 format])
+AT_KEYWORDS([rpmformat v4])
+
+RPMTEST_CHECK([
+cp /data/misc/rpmdump4.txt expout
+ver=4
+pkg=/build/RPMS/4/noarch/attrtest-1.0-1.noarch.rpm
+source /pinned/common/buildrepr.sh
+
+runroot ${RPM_CONFIGDIR_PATH}/rpmdump ${pkg}
+],
+[0],
+[expout],
+[])
+
+RPMTEST_CHECK([
+rpm -qp --qf "%{rpmformat}\n" ${RPMTEST}/build/RPMS/4/noarch/attrtest-1.0-1.noarch.rpm
+],
+[0],
+[4
+],
+[])
+
+RPMTEST_CHECK([[
+sid=$(rpm -qp --qf "%{sigmd5}\n" ${RPMTEST}/build/SRPMS/attrtest-1.0-1.src.rpm)
+pid=$(rpm -qp --qf "%{sigmd5}\n" ${RPMTEST}/build/RPMS/4/noarch/attrtest-1.0-1.noarch.rpm)
+spid=$(rpm -qp --qf "%{sourcesigmd5}\n" ${RPMTEST}/build/RPMS/4/noarch/attrtest-1.0-1.*.rpm)
+hid=$(rpm -qp --qf "%{sha1header}\n" ${RPMTEST}/build/RPMS/4/noarch/attrtest-1.0-1.noarch.rpm)
+shid=$(rpm -qp --qf "%{sha1header}\n" ${RPMTEST}/build/SRPMS/attrtest-1.0-1.src.rpm)
+
+# only validate the general characteristics here to avoid pinning
+echo -n ${sid} | wc -c
+echo -n ${pid} | wc -c
+echo -n ${spid} | wc -c
+echo -n ${hid} | wc -c
+echo -n ${shid} | wc -c
+[ "${sid}" = "${spid}" ] || exit 1
+[ "${sid}" != "${pid}" ] || exit 1
+[ "${pid}" != "${spid}" ] || exit 1
+[ "${hid}" != "${shid}" ] || exit 1
+]],
+[0],
+[32
+32
+32
+40
+40
+],
+[])
+
+RPMTEST_CHECK([
+cp /data/misc/rpmdump4-srpm.txt expout
+${RPM_CONFIGDIR_PATH}/rpmdump ${RPMTEST}/build/SRPMS/attrtest-1.0-1.src.rpm
+],
+[0],
+[expout],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([rpm v6 format])
+AT_KEYWORDS([rpmformat v6])
+
+RPMTEST_CHECK([
+cp /data/misc/rpmdump6.txt expout
+ver=6
+pkg=/build/RPMS/6/noarch/attrtest-1.0-1.noarch.rpm
+source /pinned/common/buildrepr.sh
+
+runroot ${RPM_CONFIGDIR_PATH}/rpmdump ${pkg}
+],
+[0],
+[expout],
+[])
+
+RPMTEST_CHECK([
+rpm -qp --qf "%{rpmformat}\n" ${RPMTEST}/build/RPMS/6/noarch/attrtest-1.0-1.noarch.rpm
+],
+[0],
+[6
+],
+[])
+
+RPMTEST_CHECK([
+rpm -qp --qf "%{sigmd5}\n" ${RPMTEST}/build/SRPMS/attrtest-1.0-1.src.rpm
+rpm -qp --qf "%{sigmd5}\n" ${RPMTEST}/build/RPMS/6/noarch/attrtest-1.0-1.noarch.rpm
+rpm -qp --qf "%{sourcesigmd5}\n" ${RPMTEST}/build/RPMS/6/noarch/attrtest-1.0-1.noarch.rpm
+rpm -qp --qf "%{sha1header}\n" ${RPMTEST}/build/RPMS/6/noarch/attrtest-1.0-1.noarch.rpm
+rpm -qp --qf "%{sha1header}\n" ${RPMTEST}/build/SRPMS/attrtest-1.0-1.src.rpm
+],
+[0],
+[(none)
+(none)
+(none)
+(none)
+(none)
+],
+[])
+
+RPMTEST_CHECK([
+cp /data/misc/rpmdump6-srpm.txt expout
+${RPM_CONFIGDIR_PATH}/rpmdump ${RPMTEST}/build/SRPMS/attrtest-1.0-1.src.rpm
+],
+[0],
+[expout],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP([rpm v3 format])
+AT_KEYWORDS([rpmformat install query v3])
+RPMTEST_CHECK([
+runroot rpm -qpl /data/RPMS/hello-1.0-1.x86_64.rpm-v3
+],
+[0],
+[/usr/local/bin/hello
+/usr/share/doc/hello
+/usr/share/doc/hello/FAQ
+],
+[warning: RPM v3 packages are deprecated: hello-1.0-1.x86_64
+])
+
+RPMTEST_CHECK([
+runroot rpm2cpio /data/RPMS/hello-1.0-1.x86_64.rpm-v3 | cpio -t --quiet
+],
+[0],
+[./usr/local/bin/hello
+./usr/share/doc/hello
+./usr/share/doc/hello/FAQ
+],
+[warning: RPM v3 packages are deprecated: hello-1.0-1.x86_64
+])
+
+RPMTEST_CHECK([
+runroot rpm -U --nodeps /data/RPMS/hello-1.0-1.x86_64.rpm-v3
+],
+[1],
+[],
+[warning: RPM v3 packages are deprecated: hello-1.0-1.x86_64
+error: package format not supported: /data/RPMS/hello-1.0-1.x86_64.rpm-v3
+])
+
+RPMTEST_CHECK([
+runroot rpm -U --nodeps --noverify /data/RPMS/hello-1.0-1.x86_64.rpm-v3
+],
+[1],
+[],
+[warning: RPM v3 packages are deprecated: hello-1.0-1.x86_64
+error: package format not supported: /data/RPMS/hello-1.0-1.x86_64.rpm-v3
+])
+
+RPMTEST_CHECK([
+rpm -qp --qf "%{rpmformat}\n" /data/RPMS/hello-1.0-1.x86_64.rpm-v3
+],
+[0],
+[3
+],
+[ignore])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP([invalid rpmformat])
+AT_KEYWORDS([rpmformat build])
+
+RPMTEST_CHECK([
+rpmspec -q --define "_rpmformat 9" /data/SPECS/test-subpackages.spec
+],
+[0],
+[test-1.0-1.x86_64
+test-test2-1.0-1.x86_64
+test-test3-1.0-1.x86_64
+],
+[warning: invalid rpm format 9 requested, using 4
+])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([spec overridden format])
+AT_KEYWORDS([rpmformat build])
+
+RPMTEST_CHECK([
+runroot rpmbuild -ba \
+		--quiet \
+		--with pkgfmt \
+		--define "_myrpmformat 6" \
+		/data/SPECS/subpkg-mini.spec
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([[
+runroot rpm -qp --qf "%{rpmformat} %{name}\n" \
+	/build/RPMS/*/subpkg-mini-*.rpm /build/SRPMS/subpkg-mini*.rpm
+]],
+[0],
+[6 subpkg-mini
+6 subpkg-mini-test2
+6 subpkg-mini-test3
+6 subpkg-mini
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpmbuild -ba \
+		--quiet \
+		--with pkgfmt \
+		--define "_myrpmformat 4" \
+		/data/SPECS/subpkg-mini.spec
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([[
+runroot rpm -qp --qf "%{rpmformat} %{name}\n" \
+	/build/RPMS/*/subpkg-mini-*.rpm /build/SRPMS/subpkg-mini*.rpm
+]],
+[0],
+[4 subpkg-mini
+4 subpkg-mini-test2
+4 subpkg-mini-test3
+4 subpkg-mini
+],
+[])
+RPMTEST_CLEANUP

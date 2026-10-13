@@ -1,0 +1,5 @@
+for v in SHA3_256HEADER SHA256HEADER SHA1HEADER SIGMD5 PAYLOADSHA256 PAYLOADSHA256ALT PAYLOADSHA3_256 PAYLOADSHA3_256ALT PAYLOADSIZE PAYLOADSIZEALT; do
+    runroot rpm -q --qf "${v}: %{${v}}\n" ${pkg}
+done
+
+runroot rpmkeys -Kv --nosignature ${pkg}

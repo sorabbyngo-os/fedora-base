@@ -1,0 +1,38 @@
+#    rpmbrp.at: rpm build root policy scripts tests
+
+AT_BANNER([RPM build root policy scripts])
+
+# ------------------------------
+# Check brp-remove-la-files
+RPMTEST_SETUP([brp-remove-la-files])
+AT_KEYWORDS([build brp])
+RPMTEST_CHECK([
+TD=/tmp/brp-remove-la-files
+
+runroot rm -rf $TD
+runroot mkdir -p $TD
+runroot echo ".la - a libtool library file" > $TD/test1.la
+runroot echo ".la - a not libtool library file" > $TD/test2.la
+runroot echo "other file" > $TD/test.txt
+runroot ln -s test1.la $TD/test.la
+runroot ln -s test2.la $TD/testfalse.la
+runroot --setenv RPM_BUILD_ROOT $TD ${RPM_CONFIGDIR_PATH}/brp-remove-la-files
+runroot ls -1 $TD/*
+],
+[0],
+[/tmp/brp-remove-la-files/test.txt
+/tmp/brp-remove-la-files/test2.la
+/tmp/brp-remove-la-files/testfalse.la
+],
+[ignore])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP([check-rpaths])
+AT_KEYWORDS([build brp])
+RPMTEST_CHECK([
+runroot ${RPM_CONFIGDIR_PATH}/check-rpaths-worker /data/misc/libboth-rpath-and-runpath.so
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP

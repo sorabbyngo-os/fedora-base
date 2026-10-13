@@ -1,0 +1,679 @@
+#    rpmverify.at: rpm verification tests
+
+AT_BANNER([RPM verification])
+
+# ------------------------------
+# 
+RPMTEST_SETUP_RW([dependency problems])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+
+runroot rpmbuild --quiet -bb \
+	--define "pkg one" \
+	--define "reqs deptest-two" \
+	  /data/SPECS/deptest.spec
+
+runroot rpm -U --nodeps /build/RPMS/noarch/deptest-one-1.0-1.noarch.rpm
+runroot rpm -Va --nofiles
+],
+[1],
+[Unsatisfied dependencies for deptest-one-1.0-1.noarch:
+	deptest-two is needed by (installed) deptest-one-1.0-1.noarch
+],
+[])
+RPMTEST_CLEANUP
+
+# Test file verify when no errors expected.
+# Ignore dependencies here as we're not testing for them, and
+# --nogroup --nouser is required when running tests as non-root.
+RPMTEST_SETUP_RW([files with no problems])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hello-2.0-1.i686.rpm
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP
+
+# Test file verify when no errors expected in verbose mode.
+RPMTEST_SETUP_RW([files with no problems in verbose mode])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hello-2.0-1.i686.rpm
+runroot rpm -Vva --nodeps ${VERIFYOPTS}
+],
+[0],
+[.........    /usr/bin/hello
+.........    /usr/share/doc/hello-2.0
+.........  d /usr/share/doc/hello-2.0/COPYING
+.........  d /usr/share/doc/hello-2.0/FAQ
+.........  d /usr/share/doc/hello-2.0/README
+],
+[])
+RPMTEST_CLEANUP
+
+# Test file verify when no errors expected in verbose mode.
+RPMTEST_SETUP_RW([directory replaced with a directory symlink])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+tf="${RPMTEST}"/opt/foo
+rm -rf "${RPMTEST}"/opt/*
+
+runroot rpmbuild --quiet -bb \
+        --define "ver 1.0" \
+        --define "filetype datadir" \
+        --define "filedata README1" \
+        --define "user $(id -u -n)" \
+        --define "grp $(id -g -n)" \
+          /data/SPECS/replacetest.spec
+
+runroot rpm -U /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+mv "${RPMTEST}"/opt/foo "${RPMTEST}"/opt/was
+ln -s was "${RPMTEST}"/opt/foo
+runroot rpm -Vv replacetest
+],
+[0],
+[.........    /opt/foo
+.........    /opt/foo/README1
+.........    /opt/goo
+.........    /opt/zoo
+],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([directory replaced with an invalid directory symlink])
+AT_KEYWORDS([verify])
+RPMTEST_SKIP_IF([test `id -u` != 0 ])
+RPMTEST_CHECK([
+tf="${RPMTEST}"/opt/foo
+rm -rf "${RPMTEST}"/opt/*
+
+runroot rpmbuild --quiet -bb \
+        --define "ver 1.0" \
+        --define "filetype datadir" \
+        --define "filedata README1" \
+          /data/SPECS/replacetest.spec
+
+runroot rpm -U /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+mv "${RPMTEST}"/opt/foo "${RPMTEST}"/opt/was
+ln -s was "${RPMTEST}"/opt/foo
+chown -h bin "${RPMTEST}"/opt/foo
+runroot rpm -Vv replacetest
+],
+[1],
+[....LU...    /opt/foo
+.........    /opt/foo/README1
+.........    /opt/goo
+.........    /opt/zoo
+],
+[])
+RPMTEST_CLEANUP
+
+# Test file verify after mutilating the files a bit.
+RPMTEST_SETUP_RW([verify from db, with problems present])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hello-2.0-1.i686.rpm
+rm -f "${RPMTEST}"/usr/share/doc/hello-2.0/FAQ
+chmod u-x "${RPMTEST}"/usr/bin/hello
+dd if=/dev/zero of="${RPMTEST}"/usr/bin/hello \
+   conv=notrunc bs=1 seek=5 count=6 2> /dev/null
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+],
+[1],
+[.M5....T.    /usr/bin/hello
+missing   d /usr/share/doc/hello-2.0/FAQ
+],
+[])
+RPMTEST_CLEANUP
+
+# Test file verify from original package after mutilating the files a bit.
+RPMTEST_SETUP_RW([verify from package, with problems present])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hello-2.0-1.i686.rpm
+rm -f "${RPMTEST}"/usr/share/doc/hello-2.0/FAQ
+chmod u-x "${RPMTEST}"/usr/bin/hello
+dd if=/dev/zero of="${RPMTEST}"/usr/bin/hello \
+   conv=notrunc bs=1 seek=5 count=6 2> /dev/null
+runroot rpm -Vp --nodeps ${VERIFYOPTS} /data/RPMS/hello-2.0-1.i686.rpm
+],
+[1],
+[.M5....T.    /usr/bin/hello
+missing   d /usr/share/doc/hello-2.0/FAQ
+],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([verify file attribute filtering])
+AT_KEYWORDS([query])
+RPMTEST_CHECK([
+
+runroot rpmbuild -bb --quiet \
+  /data/SPECS/vattrtest.spec
+
+runroot rpm -U /build/RPMS/noarch/vattrtest-1.0-1.noarch.rpm
+runroot touch /opt/vattrtest/g
+runroot chmod 644 /opt/vattrtest/g
+
+cmd="rpm -Vv ${VERIFYOPTS}"
+for filter in --noconfig --noghost --noartifact -A -c -d -L; do
+    echo ${filter}
+    runroot ${cmd} ${filter} vattrtest
+done
+],
+[ignore],
+[--noconfig
+.........    /opt/vattrtest
+.........  a /opt/vattrtest/a
+.........  d /opt/vattrtest/d
+.........  g /opt/vattrtest/g
+.........  l /opt/vattrtest/l
+.........  m /opt/vattrtest/m
+.........  r /opt/vattrtest/r
+--noghost
+.........    /opt/vattrtest
+.........  a /opt/vattrtest/a
+.........  c /opt/vattrtest/c
+.........  c /opt/vattrtest/cn
+.........  d /opt/vattrtest/d
+.........  l /opt/vattrtest/l
+.........  m /opt/vattrtest/m
+.........  r /opt/vattrtest/r
+--noartifact
+.........    /opt/vattrtest
+.........  c /opt/vattrtest/c
+.........  c /opt/vattrtest/cn
+.........  d /opt/vattrtest/d
+.........  g /opt/vattrtest/g
+.........  l /opt/vattrtest/l
+.........  m /opt/vattrtest/m
+.........  r /opt/vattrtest/r
+-A
+.........  a /opt/vattrtest/a
+-c
+.........  c /opt/vattrtest/c
+.........  c /opt/vattrtest/cn
+-d
+.........  d /opt/vattrtest/d
+-L
+.........  l /opt/vattrtest/l
+],
+[])
+RPMTEST_CLEANUP
+
+# Test verify script success & failure behavior
+RPMTEST_SETUP_RW([verifyscript])
+AT_KEYWORDS([verify])
+
+runroot rpmbuild --quiet -bb /data/SPECS/verifyscript.spec
+runroot rpm -U --nodeps /build/RPMS/noarch/verifyscript-1.0-1.noarch.rpm
+
+RPMTEST_CHECK([
+rm -f "${RPMTEST}"/var/checkme
+runroot rpm -V --nodeps verifyscript
+],
+[1],
+[],
+[[error: lua script failed: [string "%verify(verifyscript-1.0-1.noarch)"]:2: bad
+]])
+
+RPMTEST_CHECK([
+touch "${RPMTEST}"/var/checkme
+runroot rpm -V --nodeps verifyscript
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP
+
+# ------------------------------
+# shared file timestamp behavior
+RPMTEST_SETUP_RW([shared file timestamp behavior])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+
+# create packages sharing a file but with different timestamp
+for p in "one" "two"; do
+    runroot rpmbuild --quiet -bb \
+        --define "pkg $p" \
+	--define "filedata same_stuff" \
+          /data/SPECS/conflicttest.spec
+    sleep 1
+done
+
+# first instance of a shared file is the one that actually gets created,
+# force the order so we know what to expect as these dont depend on each other
+runroot rpm -U --noorder /build/RPMS/noarch/conflictone-1.0-1.noarch.rpm /build/RPMS/noarch/conflicttwo-1.0-1.noarch.rpm
+runroot rpm -e conflicttwo
+runroot rpm -Va ${VERIFYOPTS}
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP
+
+# ------------------------------
+RPMTEST_SETUP_RW([minimize writes (files)])
+AT_KEYWORDS([upgrade verify min_writes])
+
+for v in "1.0" "2.0"; do
+    runroot rpmbuild --quiet -bb \
+        --define "ver $v" \
+	--define "filetype file" \
+	--define "filedata foo" \
+          /data/SPECS/replacetest.spec
+done
+
+for v in "3.0" "4.0"; do
+    runroot rpmbuild --quiet -bb \
+        --define "ver $v" \
+	--define "filetype file" \
+	--define "filedata fox" \
+          /data/SPECS/replacetest.spec
+done
+
+RPMTEST_CHECK([
+RPMDB_RESET
+tf="${RPMTEST}"/opt/foo
+rm -rf "${tf}"*
+
+runroot rpm -i /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+cat "${tf}"
+touch -t 201703171717 ${tf}
+
+runroot rpm -U \
+	--define "_minimize_writes 1" \
+	 /build/RPMS/noarch/replacetest-2.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+cat "${tf}"
+
+runroot rpm -U \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+cat "${tf}"
+
+echo "xx" > "${tf}"
+cat "${tf}"
+
+runroot rpm -U \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-4.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+cat "${tf}"
+
+touch -t 201703171717 ${tf}
+
+runroot rpm -U --oldpackage \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+cat "${tf}"
+],
+[0],
+[foo
+foo
+fox
+xx
+fox
+fox
+],
+[])
+
+RPMTEST_CHECK([
+RPMDB_RESET
+tf="${RPMTEST}"/opt/foo
+rm -rf "${tf}"*
+
+runroot rpm -i /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+cat "${tf}"
+touch -t 201703171717 ${tf}
+
+runroot rpm -Uvv --fsmdebug \
+	--define "_minimize_writes 1" \
+	 /build/RPMS/noarch/replacetest-2.0-1.noarch.rpm > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c "touch" output.txt
+cat "${tf}"
+
+
+runroot rpm -Uvv --fsmdebug \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm  > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c "touch" output.txt
+cat "${tf}"
+echo "xx" > "${tf}"
+cat "${tf}"
+
+runroot rpm -Uvv --fsmdebug \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-4.0-1.noarch.rpm  > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c "touch" output.txt
+cat "${tf}"
+
+touch -t 201703171717 ${tf}
+
+runroot rpm -U -Uvv --fsmdebug  --oldpackage \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm  > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c  "touch" output.txt
+cat "${tf}"
+],
+[0],
+[foo
+2
+foo
+1
+fox
+xx
+1
+fox
+2
+fox
+],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([minimize writes (hardlinks)])
+AT_KEYWORDS([upgrade verify min_writes])
+for v in "0" "1"; do
+    runroot rpmbuild --quiet -bb --define "ver ${v}" /data/SPECS/hlbreak.spec
+done
+RPMTEST_CHECK([
+runroot rpm -U --define "_minimize_writes 1" /build/RPMS/noarch/hlbreak-0-0.noarch.rpm
+runroot rpm -Vav ${VERIFYOPTS}
+runroot rpm -U --define "_minimize_writes 1" /build/RPMS/noarch/hlbreak-1-0.noarch.rpm
+runroot rpm -Vav ${VERIFYOPTS}
+],
+[0],
+[.........    /opt/file2
+.........    /opt/file1
+.........    /opt/file2
+],
+)
+RPMTEST_CLEANUP
+
+
+RPMTEST_SETUP_RW([minimize writes (symlinks)])
+AT_KEYWORDS([upgrade verify min_writes])
+for v in "1.0" "2.0"; do
+    runroot rpmbuild --quiet -bb \
+        --define "ver $v" \
+	--define "filetype link" \
+	--define "filedata doh" \
+          /data/SPECS/replacetest.spec
+done
+
+for v in "3.0" "4.0"; do
+    runroot rpmbuild --quiet -bb \
+        --define "ver $v" \
+	--define "filetype link" \
+	--define "filedata fox" \
+          /data/SPECS/replacetest.spec
+done
+
+RPMTEST_CHECK([
+RPMDB_RESET
+tf="${RPMTEST}"/opt/foo
+rm -rf "${tf}"*
+
+runroot rpm -i /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+readlink "${tf}"
+
+runroot rpm -U \
+	--define "_minimize_writes 1" \
+	 /build/RPMS/noarch/replacetest-2.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+readlink "${tf}"
+
+runroot rpm -U \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+readlink "${tf}"
+
+ln -sf "xx" "${tf}"
+readlink "${tf}"
+
+runroot rpm -U \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-4.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+readlink "${tf}"
+
+runroot rpm -U --oldpackage \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+readlink "${tf}"
+],
+[0],
+[doh
+doh
+fox
+xx
+fox
+fox
+],
+[])
+
+RPMTEST_CHECK([
+RPMDB_RESET
+tf="${RPMTEST}"/opt/foo
+rm -rf "${tf}" "${tf}".rpm*
+
+runroot rpm -i /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+readlink "${tf}"
+
+runroot rpm -Uvv --fsmdebug \
+	--define "_minimize_writes 1" \
+	 /build/RPMS/noarch/replacetest-2.0-1.noarch.rpm > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c "touch" output.txt
+readlink "${tf}"
+
+
+runroot rpm -Uvv --fsmdebug \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c "touch" output.txt
+readlink "${tf}"
+ln -sf "xx" "${tf}"
+readlink "${tf}"
+
+runroot rpm -Uvv --fsmdebug \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-4.0-1.noarch.rpm  > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c "touch" output.txt
+readlink "${tf}"
+
+runroot rpm -U -Uvv --fsmdebug  --oldpackage \
+	--define "_minimize_writes 1" \
+	/build/RPMS/noarch/replacetest-3.0-1.noarch.rpm  > output.txt 2>&1
+runroot rpm -V ${VERIFYOPTS} replacetest
+grep -c  "touch" output.txt
+readlink "${tf}"
+],
+[0],
+[doh
+2
+doh
+1
+fox
+xx
+1
+fox
+2
+fox
+],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([minimize writes (SUID files)])
+AT_KEYWORDS([upgrade verify min_writes])
+RPMTEST_CHECK([
+tf="${RPMTEST}"/opt/foo
+rm -rf "${tf}" "${tf}".rpm*
+
+for v in "1.0" "2.0"; do
+    runroot rpmbuild --quiet -bb \
+        --define "ver $v" \
+	--define "filetype file" \
+	--define "filedata foo" \
+	--define "fileattr %attr(2755,-,-)" \
+          /data/SPECS/replacetest.spec
+done
+
+runroot rpm -U /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+runroot rpm -U \
+	--define "_minimize_writes 1" \
+	 /build/RPMS/noarch/replacetest-2.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+chmod 777 "${tf}"
+runroot rpm -U \
+	--oldpackage \
+	--define "_minimize_writes 1" \
+	 /build/RPMS/noarch/replacetest-1.0-1.noarch.rpm
+runroot rpm -V ${VERIFYOPTS} replacetest
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([verify empty/no capabilities 1])
+AT_KEYWORDS([verify])
+RPMTEST_SKIP_IF([$CAP_DISABLED])
+RPMTEST_CHECK([
+
+runroot rpm -U --nocaps --ignoreos --nosignature \
+	/data/RPMS/capstest-1.0-1.noarch.rpm
+
+runroot rpm -Va ${VERIFYOPTS}
+],
+[1],
+[........P    /a/emptyCaps1
+........P    /a/emptyCaps2
+],
+[])
+RPMTEST_CLEANUP
+
+
+RPMTEST_SETUP_RW([verify empty/no capabilities 2])
+AT_KEYWORDS([verify])
+RPMTEST_SKIP_IF([$CAP_DISABLED])
+RPMTEST_CHECK([
+
+runroot rpm -U --nocaps --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hello-2.0-1.i686.rpm
+
+runroot rpm -Va ${VERIFYOPTS} --nodeps | grep "/bin/hello"
+],
+[1],
+[],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([rpm --restore])
+AT_KEYWORDS([verify restore])
+RPMTEST_CHECK([
+
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hello-2.0-1.i686.rpm
+runroot touch /usr/share/doc/hello-2.0/FAQ
+runroot chmod a-x /usr/bin/hello
+runroot rpm --restore --percent --test hello
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+runroot rpm --restore --hash hello
+],
+[0],
+[%% 0.000000
+.M.......    /usr/bin/hello
+.......T.  d /usr/share/doc/hello-2.0/FAQ
+########################################
+Updating / installing...
+########################################
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+# same as above but with more content in the rpmdb, in particular gpg-pubkey's
+echo "%_keyring rpmdb" >> "${RPMTEST}"/"${RPMSYSCONFDIR}"/macros.testenv
+runroot rpmkeys --import /data/keys/rpm.org-rsa-2048-test.pub
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hlinktest-1.0-1.noarch.rpm
+runroot touch /usr/share/doc/hello-2.0/FAQ
+runroot chmod a-x /usr/bin/hello
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+runroot rpm -a --restore
+],
+[0],
+[.M.......    /usr/bin/hello
+.......T.  d /usr/share/doc/hello-2.0/FAQ
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([test for %verify in %files])
+AT_KEYWORDS([verify])
+RPMTEST_CHECK([
+
+runroot rpmbuild --quiet -bb /data/SPECS/verifyfiles.spec
+runroot rpm -i /build/RPMS/noarch/verifyfiles-1.0-1.noarch.rpm
+chmod -w "${RPMTEST}"/test-verify*
+runroot rpm -Vv ${VERIFYOPTS} verifyfiles
+],
+[1],
+[.M.......    /test-verify1
+.........    /test-verify2
+],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([alternative passwd location])
+AT_KEYWORDS([verify])
+
+runroot rpmbuild -bb --quiet /data/SPECS/klang.spec
+runroot rpm -Uvh /build/RPMS/noarch/klang-*
+echo "klangd:x:1111:1111::/:/sbin/nologin\n" >> ${RPMTEST}/usr/lib/passwd
+echo "klangd:x:8888:" >> ${RPMTEST}/usr/lib/group
+
+RPMTEST_CHECK([
+runroot chown 1111:8888 /var/lib/klangd
+runroot rpm -D "_passwd_path /usr/lib/passwd:/etc/passwd" -D "_group_path /usr/lib/group:/etc/group" -V klang-server
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP

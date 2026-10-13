@@ -1,0 +1,112 @@
+#ifndef _RPMVS_H
+#define _RPMVS_H
+
+#include <rpm/rpmtypes.h>
+#include <rpm/rpmts.h> /* for rpmVSFlags */
+#include "header_internal.hh"
+
+/* siginfo range bits */
+enum {
+    RPMSIG_HEADER	= (1 << 0),
+    RPMSIG_PAYLOAD	= (1 << 1),
+};
+
+struct rpmsinfo_s {
+    /* static data */
+    int type;
+    int disabler;
+    int range;
+    /* parsed data */
+    int hashalgo;
+    int sigalgo;
+    int alt;
+    int id;
+    int wrapped;
+    int strength;
+    rpmPubkey key;
+    char *keyid;
+    union {
+	pgpDigParams sig;
+	char *dig;
+    };
+    char *descr;
+    DIGEST_CTX ctx;
+    /* verify results */
+    rpmRC rc;
+    char *msg;
+    ARGV_t lints;
+};
+
+/**
+ * Signature/digest verification callback prototype.
+ * Useful eg for customizing verification output and results.
+ *
+ * @param sinfo		signature/digest info
+ * @param cbdata	callback data
+ * @return		1 to continue, 0 to stop verification
+ */
+typedef int (*rpmsinfoCb)(struct rpmsinfo_s *sinfo, void *cbdata);
+
+const char *rpmsinfoDescr(struct rpmsinfo_s *sinfo);
+
+RPM_PRIVATE_API
+char *rpmsinfoMsg(struct rpmsinfo_s *sinfo);
+
+RPM_PRIVATE_API
+struct rpmvs_s *rpmvsCreate(int vfylevel, rpmVSFlags vsflags, rpmKeyring keyring);
+
+RPM_PRIVATE_API
+void rpmvsInit(struct rpmvs_s *vs, hdrblob blob, rpmDigestBundle bundle);
+
+RPM_PRIVATE_API
+rpmVSFlags rpmvsFlags(struct rpmvs_s *vs);
+
+RPM_PRIVATE_API
+struct rpmvs_s *rpmvsFree(struct rpmvs_s *sis);
+
+RPM_PRIVATE_API
+void rpmvsAppendTag(struct rpmvs_s *sis, hdrblob blob, rpmTagVal tag);
+
+RPM_PRIVATE_API
+void rpmvsInitRange(struct rpmvs_s *sis, int range);
+
+RPM_PRIVATE_API
+void rpmvsFiniRange(struct rpmvs_s *sis, int range);
+
+RPM_PRIVATE_API
+int rpmvsRange(struct rpmvs_s *vs);
+
+/*
+ * This is the main rpm package integrity verification machinery, and
+ * a peculiar beast at that because of all the legacy compatibility modes
+ * it needs to support in addition to the more modern enforcing modes.
+ *
+ * All verifiables (signatures, digests) indicated in the type bitmask are
+ * verified, a negative result causes a failure of that type in all modes.
+ *
+ * Return a bitmask of the failed verifiable types, or zero on success.
+ * Success semantics depend on the verification mode specified at rpmvsCreate()
+ * time:
+ * - In "none" verifylevel (rpm < 4.14 compatibility mode), there are no
+ *   additional constraints. Notably rpmReadPackageFile() always uses this.
+ * - In "digest", "signature" and "all" modes, there must be no failures and
+ *   a at least one positive result of each enabled verifiable type,
+ *   governing the entire package (header + payload).
+ *
+ * To make matters worse, callbacks (need to) modify some results to
+ * get the desired behavior in some cases.
+ */
+RPM_PRIVATE_API
+int rpmvsVerify(struct rpmvs_s *sis, int type,
+                       rpmsinfoCb cb, void *cbdata);
+
+RPM_PRIVATE_API
+void rpmvsForeach(struct rpmvs_s *sis, rpmsinfoCb cb, void *cbdata);
+
+RPM_PRIVATE_API
+rpmRC rpmpkgRead(struct rpmvs_s *vs, FD_t fd,
+		hdrblob *sigblobp, hdrblob *blobp, char **emsg);
+
+
+int sortRC(int rc);
+#endif /* _RPMVS_H */

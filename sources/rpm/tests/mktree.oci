@@ -1,0 +1,124 @@
+#!/bin/bash
+#
+# OCI-based mktree backend
+
+set -e
+
+PROGRAM=$(basename $0)
+if [ "$PROGRAM" == "mktree" ]; then
+    # Running from build directory
+    CMAKE=yes
+    NATIVE=@MKTREE_NATIVE@
+    TOOLCHAIN=@MKTREE_TOOLCHAIN@
+    PODMAN=@PODMAN@
+    CONTEXT=@CMAKE_SOURCE_DIR@
+else
+    # Running from source directory
+    CMAKE=no
+    NATIVE=no
+    TOOLCHAIN=
+    PODMAN=podman
+    CONTEXT=..
+fi
+
+DEST_DIR="$PWD/mktree.destdir"
+CACHE_DIR="mktree.cache"
+IID_FILE="$CACHE_DIR/image-id"
+IMAGE_ID=$(cat $IID_FILE 2>/dev/null || echo "")
+BASE_TAG="localhost/rpm/base:$(sha256sum Containerfile | head -c8)"
+ARGS="-f Containerfile $CONTEXT"
+ROOTLESS=$([ $(id -u) == 0 ] && echo 0 || echo 1)
+CMD=$1; shift
+
+export ROOTLESS
+source mktree.common
+
+mkdir -p $CACHE_DIR
+
+rpmtests()
+{
+    local opts
+    local vol="$PWD:/srv:z"
+
+    # Pass select options to $PODMAN
+    case "$1" in
+        # Useful for CI environments without a tty
+        --interactive=*) opts=$1; shift ;;
+    esac
+
+    # Don't keep the test artifacts around in non-cmake mode
+    if [ $CMAKE == no ]; then
+        set -- --log "$@"
+        vol=/srv
+    fi
+
+    $PODMAN run --privileged -it --rm --read-only --tmpfs /tmp -v $vol \
+                --workdir /srv -e ROOTLESS=$ROOTLESS $opts $IMAGE_ID \
+                rpmtests "$@"
+}
+
+clean()
+{
+    rm -f "$IID_FILE"
+    [ -z "$IMAGE_ID" ] || [ -z "$($PODMAN images -q $IMAGE_ID)" ] && return
+    [ "$($PODMAN inspect -f "{{ .RepoTags }}" $IMAGE_ID)" != "[]" ] && return
+    $PODMAN rmi $IMAGE_ID >/dev/null
+}
+
+case $CMD in
+    build)
+        # Process arguments
+        case "$1" in
+            --toolchain)
+                TOOLCHAIN=$2
+                ;;
+        esac
+        [ -n "$TOOLCHAIN" ] && ARGS="--build-arg TOOLCHAIN=$TOOLCHAIN $ARGS"
+
+        # Build base image
+        $PODMAN image exists $BASE_TAG || \
+        $PODMAN build --target base -t $BASE_TAG $ARGS
+
+        # Add RPM install on top
+        clean
+        if [ $NATIVE == yes ]; then
+            # Native build
+            id=$($PODMAN create -t $BASE_TAG)
+            trap "$PODMAN kill $id >/dev/null; $PODMAN rm $id > /dev/null" EXIT
+            $PODMAN start $id
+            rm -rf "$DEST_DIR"
+            make_install $DEST_DIR
+            $PODMAN cp $DEST_DIR/. $id:/
+            $PODMAN exec $id /usr/share/mktree/setup.sh
+            $PODMAN commit -q $id --iidfile=$IID_FILE
+        else
+            # Standalone build
+            $PODMAN build --target full --iidfile=$IID_FILE \
+                          --build-arg BASE_IMAGE=$BASE_TAG $ARGS
+        fi
+    ;;
+    save)
+        $PODMAN save -o "$1" $BASE_TAG
+    ;;
+    load)
+        $PODMAN load -i "$1"
+    ;;
+    check)
+        rpmtests "$@"
+    ;;
+    atshell)
+        rpmtests --shell "$@"
+    ;;
+    shell)
+        rpmtests --shell snapshot shell
+    ;;
+    reset)
+        rpmtests --reset
+    ;;
+    tag)
+        $PODMAN tag $IMAGE_ID $1
+    ;;
+    clean)
+        clean
+    ;;
+esac
