@@ -1,4 +1,0 @@
-# Packages needed for integration tests
-rsync
-rpm-build
-createrepo_c
