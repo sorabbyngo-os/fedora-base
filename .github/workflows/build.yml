@@ -1,0 +1,49 @@
+name: build-base
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  pull_request:
+  schedule:
+    - cron: '0 5 * * 1'      # weekly rebuild, Mondays 05:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/sorabbyngo-os/fedora-base
+  FEDORA_VERSION: "45"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (lint runs inside the build)
+        run: |
+          podman build -f images/Containerfile \
+            --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
+            -t "${IMAGE}:build" .
+
+      - name: Verify os-release
+        run: |
+          podman run --rm "${IMAGE}:build" sh -c \
+            '. /usr/lib/os-release && test "$ID" = sorabbyngo && test "$VERSION_ID" = "'"${FEDORA_VERSION}"'"'
+
+      - name: Push to GHCR (main and scheduled runs only)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${GH_TOKEN}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for t in latest "f${FEDORA_VERSION}" "sha-${GITHUB_SHA::7}"; do
+            podman tag "${IMAGE}:build" "${IMAGE}:${t}"
+            podman push "${IMAGE}:${t}"
+          done

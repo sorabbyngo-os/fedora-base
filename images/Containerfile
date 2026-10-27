@@ -18,4 +18,4 @@ RUN sed -i "s/@FEDORA_VERSION@/${FEDORA_VERSION}/" /usr/lib/os-release
 COPY presets/sorabbyngo.preset /usr/lib/systemd/system-preset/80-sorabbyngo.preset
 RUN systemctl preset-all --preset-mode=enable-only
 
-RUN bootc container lint
+RUN bootc container lint --fatal-warnings
