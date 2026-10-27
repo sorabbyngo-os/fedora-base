@@ -10,7 +10,7 @@ RUN set -eu; \
     done | sort -u > /tmp/packages.txt; \
     dnf -y install --setopt=install_weak_deps=False $(cat /tmp/packages.txt); \
     dnf clean all; \
-    rm -rf /tmp/pkg /tmp/packages.txt /var/cache/dnf
+    rm -rf /tmp/pkg /tmp/packages.txt /var/cache/libdnf5 /var/cache/ldconfig /var/lib/dnf/repos /var/log/dnf5.log /run/dnf
 
 COPY overlays/os-release /usr/lib/os-release
 RUN sed -i "s/@FEDORA_VERSION@/${FEDORA_VERSION}/" /usr/lib/os-release
