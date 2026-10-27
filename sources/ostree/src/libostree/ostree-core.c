@@ -1639,7 +1639,9 @@ _ostree_loose_path (char *buf, const char *checksum, OstreeObjectType objtype, O
 
 /**
  * _ostree_stbuf_to_gfileinfo:
- * @stbuf: File stat buffer
+ * @mode: File mode
+ * @uid: File uid
+ * @gid: File gid
  *
  * OSTree only stores a subset of file attributes; for example,
  * timestamps are intentionally not stored.  This function creates a
