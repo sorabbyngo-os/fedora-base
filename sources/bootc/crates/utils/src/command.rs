@@ -387,16 +387,6 @@ mod tests {
     }
 
     #[test]
-    fn to_string_pretty_preserves_empty_arguments() {
-        let mut cmd = Command::new("printf");
-        cmd.args(["", "%s", ""]);
-
-        let displayed = cmd.to_string_pretty();
-        assert_eq!(displayed, "printf '' '%s' ''");
-        assert_eq!(shlex::split(&displayed).unwrap(), ["printf", "", "%s", ""]);
-    }
-
-    #[test]
     fn to_string_pretty() {
         let mut cmd = Command::new("podman");
         cmd.args([

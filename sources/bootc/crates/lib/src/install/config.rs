@@ -454,7 +454,6 @@ type = "xfs"
     }
 
     #[test]
-    #[cfg(feature = "install-to-disk")]
     fn test_parse_block() {
         let env = EnvProperties {
             sys_arch: "x86_64".to_string(),

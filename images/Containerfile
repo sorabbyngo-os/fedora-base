@@ -1,12 +1,21 @@
-FROM quay.io/fedora/fedora-bootc:41
+ARG FEDORA_VERSION=45
+FROM quay.io/fedora/fedora-bootc:${FEDORA_VERSION}
+ARG FEDORA_VERSION
+ARG PACKAGE_SETS="core security containers"
+
+COPY images/packages-*.list /tmp/pkg/
+RUN set -eu; \
+    for s in ${PACKAGE_SETS}; do \
+      sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "/tmp/pkg/packages-${s}.list"; \
+    done | sort -u > /tmp/packages.txt; \
+    dnf -y install --setopt=install_weak_deps=False $(cat /tmp/packages.txt); \
+    dnf clean all; \
+    rm -rf /tmp/pkg /tmp/packages.txt /var/cache/libdnf5 /var/cache/ldconfig /var/lib/dnf/repos /var/log/dnf5.log /run/dnf
 
 COPY overlays/os-release /usr/lib/os-release
-COPY images/packages.list /tmp/packages.list
-
-RUN dnf -y install $(grep -v '^#' /tmp/packages.list | tr '\n' ' ') \
-    && dnf clean all \
-    && rm -f /tmp/packages.list
+RUN sed -i "s/@FEDORA_VERSION@/${FEDORA_VERSION}/" /usr/lib/os-release
 
 COPY presets/sorabbyngo.preset /usr/lib/systemd/system-preset/80-sorabbyngo.preset
+RUN systemctl preset-all --preset-mode=enable-only
 
-RUN bootc container lint || true
+RUN bootc container lint

@@ -34,9 +34,6 @@ bootc container split-kernel-and-rootfs --output /kernel
 ```
 
 This extracts the kernel and initramfs from the current root filesystem (/) and places them in `/kernel/<kernel-version>/` with filenames `vmlinuz` and `initramfs.img`.
-Files that belong to the kernel binary are moved along with it under the same names, when present.
-Currently that is only the FIPS HMAC file (`.vmlinuz.hmac`) shipped by Fedora and RHEL derivatives.
-Other files in `/usr/lib/modules/<kernel-version>/`, such as `config` or `System.map`, stay in the rootfs.
 
 **Extract kernel files from a mounted container rootfs:**
 
@@ -53,7 +50,6 @@ After running the command, the output directory will contain:
 ```
 /output/kernels/
 └── 6.5.0-15-generic/
-    ├── .vmlinuz.hmac (Fedora/RHEL, if present)
     ├── vmlinuz
     └── initramfs.img
 ```

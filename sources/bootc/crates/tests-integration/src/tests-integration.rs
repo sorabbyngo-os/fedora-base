@@ -5,7 +5,6 @@ use cap_std_ext::cap_std::{self, fs::Dir};
 use clap::Parser;
 
 mod anaconda;
-mod booted;
 mod container;
 mod hostpriv;
 mod install;
@@ -51,9 +50,6 @@ pub(crate) enum Opt {
     },
     /// Test bootc installation via Anaconda with a local container image
     AnacondaTest(anaconda::AnacondaTestArgs),
-    /// Tests which tmt runs on a booted host
-    #[clap(subcommand)]
-    Booted(booted::Opt),
 }
 
 fn main() {
@@ -69,7 +65,6 @@ fn main() {
             selinux::verify_selinux_recurse(root, warn)
         }
         Opt::AnacondaTest(args) => anaconda::run_anaconda_test(&args),
-        Opt::Booted(opt) => booted::run(opt),
     };
     if let Err(e) = r {
         eprintln!("error: {e:?}");
