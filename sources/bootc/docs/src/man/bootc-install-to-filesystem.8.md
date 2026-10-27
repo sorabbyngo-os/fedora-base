@@ -126,19 +126,19 @@ is currently expected to be empty by default.
 
 **--composefs-backend**
 
-    Use the composefs backend instead of ostree. This is the default for images with a UKI, and for images with /usr/lib/composefs/setup-root-conf.toml and no ostree prepare-root.conf
+    If true, composefs backend is used, else ostree backend is used
 
     Default: false
 
 **--allow-missing-verity**
 
-    Make fs-verity validation optional in case the filesystem doesn't support it (composefs backend only)
+    Make fs-verity validation optional in case the filesystem doesn't support it
 
     Default: false
 
 **--uki-addon**=*UKI_ADDON*
 
-    Name of the UKI addons to install without the ".efi.addon" suffix. This option can be provided multiple times if multiple addons are to be installed (composefs backend only)
+    Name of the UKI addons to install without the ".efi.addon" suffix. This option can be provided multiple times if multiple addons are to be installed
 
 <!-- END GENERATED OPTIONS -->
 

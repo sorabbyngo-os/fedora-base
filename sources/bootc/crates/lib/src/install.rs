@@ -189,20 +189,13 @@ use serde::{Deserialize, Serialize};
 use self::baseline::InstallBlockDeviceOpts;
 use crate::bootc_composefs::status::ComposefsCmdline;
 use crate::bootc_composefs::{
-    boot::setup_composefs_boot,
-    repo::{
-        finalize_fresh_repository_policy, initialize_composefs_repository,
-        pull_install_composefs_repository, tag_pulled_image, validate_repository_policy,
-    },
+    boot::setup_composefs_boot, repo::initialize_composefs_repository,
     status::get_container_manifest_and_config,
 };
 use crate::bootc_kargs::{INITRD_ARG_PREFIX, ROOTFLAGS_KEY};
 use crate::boundimage::{BoundImage, ResolvedBoundImage};
 use crate::containerenv::ContainerExecutionInfo;
-use crate::deploy::{
-    MergeState, PreparedPullResult, PullProgress, prepare_for_pull, pull_from_prepared,
-    retry_pull_operation,
-};
+use crate::deploy::{MergeState, PreparedPullResult, prepare_for_pull, pull_from_prepared};
 use crate::install::config::Filesystem as FilesystemEnum;
 use crate::lsm;
 use crate::progress_jsonl::ProgressWriter;
@@ -211,6 +204,7 @@ use crate::store::Storage;
 use crate::task::Task;
 use crate::utils::sigpolicy_from_opt;
 use bootc_mount::Filesystem;
+use composefs_ctl::composefs::repository::RepositoryConfig;
 use linux_kernel_cmdline::{bytes, utf8};
 
 /// The toplevel boot directory
@@ -224,6 +218,8 @@ const ALONGSIDE_ROOT_MOUNT: &str = "/target";
 pub(crate) const DESTRUCTIVE_CLEANUP: &str = "etc/bootc-destructive-cleanup";
 /// This is an ext4 special directory we need to ignore.
 const LOST_AND_FOUND: &str = "lost+found";
+/// The filename of the composefs EROFS superblock; TODO move this into ostree
+const OSTREE_COMPOSEFS_SUPER: &str = ".ostree.cfs";
 /// The mount path for selinux
 const SELINUXFS: &str = "/sys/fs/selinux";
 /// The mount path for uefi
@@ -397,82 +393,21 @@ pub(crate) struct InstallConfigOpts {
 
 #[derive(Debug, Default, Clone, clap::Parser, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct InstallComposefsOpts {
-    /// Use the composefs backend instead of ostree. This is the default for images with a UKI,
-    /// and for images with /usr/lib/composefs/setup-root-conf.toml and no ostree prepare-root.conf
+    /// If true, composefs backend is used, else ostree backend is used
     #[clap(long, default_value_t)]
     #[serde(default)]
     pub(crate) composefs_backend: bool,
 
     /// Make fs-verity validation optional in case the filesystem doesn't support it
-    /// (composefs backend only)
-    #[clap(long, default_value_t)]
+    #[clap(long, default_value_t, requires = "composefs_backend")]
     #[serde(default)]
     pub(crate) allow_missing_verity: bool,
 
     /// Name of the UKI addons to install without the ".efi.addon" suffix.
-    /// This option can be provided multiple times if multiple addons are to be installed
-    /// (composefs backend only).
-    #[clap(long)]
+    /// This option can be provided multiple times if multiple addons are to be installed.
+    #[clap(long, requires = "composefs_backend")]
     #[serde(default)]
     pub(crate) uki_addon: Option<Vec<String>>,
-}
-
-impl InstallComposefsOpts {
-    /// Check that the options fit together, once `composefs_backend` says
-    /// whether the composefs backend is used (passed, or selected by the image).
-    pub(crate) fn validate(
-        &self,
-        bootloader: Option<&Bootloader>,
-        stateroot: Option<&str>,
-    ) -> Result<()> {
-        if self.composefs_backend {
-            anyhow::ensure!(
-                !matches!(bootloader, Some(Bootloader::None)),
-                "Bootloader set to none is not supported with the composefs backend"
-            );
-            let default = ostree_container::deploy::STATEROOT_DEFAULT;
-            if let Some(stateroot) = stateroot.filter(|&s| s != default) {
-                anyhow::bail!(
-                    "--stateroot {stateroot} is not supported with the composefs backend, which only uses {default}"
-                );
-            }
-        } else {
-            anyhow::ensure!(
-                !self.allow_missing_verity,
-                "--allow-missing-verity requires the composefs backend"
-            );
-            anyhow::ensure!(
-                self.uki_addon.is_none(),
-                "--uki-addon requires the composefs backend"
-            );
-        }
-        Ok(())
-    }
-
-    /// The composefs backend doesn't install logically bound images yet
-    /// (<https://github.com/bootc-dev/bootc/issues/2540>), so fail rather
-    /// than install a system that is missing them.
-    pub(crate) fn validate_bound_images(
-        &self,
-        bound_images: BoundImagesOpt,
-        root: &Dir,
-    ) -> Result<()> {
-        if !self.composefs_backend || bound_images == BoundImagesOpt::Skip {
-            return Ok(());
-        }
-        let images = crate::boundimage::query_bound_images(root)?;
-        if !images.is_empty() {
-            let images = images
-                .iter()
-                .map(|i| i.image.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            anyhow::bail!(
-                "Logically bound images are not supported with the composefs backend (found {images}); use --bound-images skip to install without them"
-            );
-        }
-        Ok(())
-    }
 }
 
 #[cfg(feature = "install-to-disk")]
@@ -502,12 +437,6 @@ pub(crate) struct InstallToDiskOpts {
     #[clap(flatten)]
     #[serde(flatten)]
     pub(crate) composefs_opts: InstallComposefsOpts,
-
-    /// Whether to use systemd-repart for partitioning.
-    /// This requires the image to have repart.d definitions
-    #[clap(long)]
-    #[serde(default)]
-    pub(crate) run_repart: bool,
 }
 
 #[derive(ValueEnum, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -678,13 +607,10 @@ pub(crate) struct InstallPrintConfigurationOpts {
 /// Global state captured from the container.
 #[derive(Debug, Clone)]
 pub(crate) struct SourceInfo {
-    /// Original image reference, retained for user-facing output and origin data.
+    /// Image reference we'll pull from (today always containers-storage: type)
     pub(crate) imageref: ostree_container::ImageReference,
-    /// Manifest digest reported by `podman inspect`, if this is a running
-    /// container.  This is not the image's containers-storage config ID.
+    /// The digest to use for pulls
     pub(crate) digest: Option<String>,
-    /// Running container's immutable containers-storage config ID, if any.
-    pub(crate) host_image_id: Option<String>,
     /// Whether or not SELinux appears to be enabled in the source commit
     pub(crate) selinux: bool,
     /// Whether the source is available in the host mount namespace
@@ -702,7 +628,7 @@ pub(crate) struct State {
     pub(crate) target_opts: InstallTargetOpts,
     pub(crate) target_imgref: ostree_container::OstreeImageReference,
     #[allow(dead_code)]
-    pub(crate) ostree_prepareroot_config: HashMap<String, String>,
+    pub(crate) prepareroot_config: HashMap<String, String>,
     pub(crate) install_config: Option<config::InstallConfiguration>,
     /// The parsed contents of the authorized_keys (not the file path)
     pub(crate) root_ssh_authorized_keys: Option<String>,
@@ -718,8 +644,6 @@ pub(crate) struct State {
 
     // If Some, then --composefs_native is passed
     pub(crate) composefs_options: InstallComposefsOpts,
-    pub(crate) composefs_fsverity_supported: bool,
-    pub(crate) allow_missing_verity_explicit: bool,
 }
 
 // Shared read-only global state
@@ -892,12 +816,6 @@ impl FromStr for MountSpec {
 }
 
 impl SourceInfo {
-    /// Return the source reference used by composefs.  Host-container imports
-    /// must use the config ID rather than the mutable human-facing tag.
-    pub(crate) fn composefs_fetch_reference(&self) -> ostree_container::ImageReference {
-        composefs_fetch_reference(&self.imageref, self.host_image_id.as_deref())
-    }
-
     // Inspect container information and convert it to an ostree image reference
     // that pulls from containers-storage.
     #[context("Gathering source info from container env")]
@@ -917,19 +835,14 @@ impl SourceInfo {
         };
         tracing::debug!("Finding digest for image ID {}", container_info.imageid);
         let digest = crate::podman::imageid_to_digest(&container_info.imageid)?;
-        Self::new(
-            imageref,
-            Some(digest),
-            Some(container_info.imageid.clone()),
-            root,
-            true,
-        )
+
+        Self::new(imageref, Some(digest), root, true)
     }
 
     #[context("Creating source info from a given imageref")]
     pub(crate) fn from_imageref(imageref: &str, root: &Dir) -> Result<Self> {
         let imageref = ostree_container::ImageReference::try_from(imageref)?;
-        Self::new(imageref, None, None, root, false)
+        Self::new(imageref, None, root, false)
     }
 
     fn have_selinux_from_repo(root: &Dir) -> Result<bool> {
@@ -952,7 +865,6 @@ impl SourceInfo {
     fn new(
         imageref: ostree_container::ImageReference,
         digest: Option<String>,
-        host_image_id: Option<String>,
         root: &Dir,
         in_host_mountns: bool,
     ) -> Result<Self> {
@@ -964,23 +876,10 @@ impl SourceInfo {
         Ok(Self {
             imageref,
             digest,
-            host_image_id,
             selinux,
             in_host_mountns,
         })
     }
-}
-
-fn composefs_fetch_reference(
-    imageref: &ostree_container::ImageReference,
-    host_image_id: Option<&str>,
-) -> ostree_container::ImageReference {
-    host_image_id
-        .map(|config_id| ostree_container::ImageReference {
-            transport: ostree_container::Transport::ContainerStorage,
-            name: config_id.to_owned(),
-        })
-        .unwrap_or_else(|| imageref.clone())
 }
 
 pub(crate) fn print_configuration(opts: InstallPrintConfigurationOpts) -> Result<()> {
@@ -1033,8 +932,8 @@ async fn initialize_ostree_root(state: &State, root_setup: &RootSetup) -> Result
     }
 
     // And also label /boot AKA xbootldr, if it exists
-    if rootfs_dir.try_exists(BOOT)? {
-        crate::lsm::ensure_dir_labeled(rootfs_dir, BOOT, None, 0o755.into(), sepolicy)?;
+    if rootfs_dir.try_exists("boot")? {
+        crate::lsm::ensure_dir_labeled(rootfs_dir, "boot", None, 0o755.into(), sepolicy)?;
     }
 
     // Build the list of ostree repo config options: defaults + install config
@@ -1071,7 +970,7 @@ async fn initialize_ostree_root(state: &State, root_setup: &RootSetup) -> Result
 
     let repo_verity_state = ostree_ext::fsverity::is_verity_enabled(&repo)?;
     let prepare_root_composefs = state
-        .ostree_prepareroot_config
+        .prepareroot_config
         .get("composefs.enabled")
         .map(|v| ComposefsState::from_str(&v))
         .transpose()?
@@ -1121,31 +1020,6 @@ async fn initialize_ostree_root(state: &State, root_setup: &RootSetup) -> Result
     let storage = Storage::new_ostree(sysroot, &temp_run)?;
 
     Ok((storage, has_ostree))
-}
-
-async fn pull_ostree_install_once(
-    repo: &ostree::Repo,
-    imgref: &ImageReference,
-    target_imgref: &ostree_container::OstreeImageReference,
-    progress: PullProgress,
-) -> Result<Box<crate::deploy::ImageState>> {
-    let prepared = prepare_for_pull(repo, imgref, Some(target_imgref), None).await?;
-    pull_ostree_install_from_prepared(repo, imgref, prepared, progress).await
-}
-
-async fn pull_ostree_install_from_prepared(
-    repo: &ostree::Repo,
-    imgref: &ImageReference,
-    prepared: PreparedPullResult,
-    progress: PullProgress,
-) -> Result<Box<crate::deploy::ImageState>> {
-    match prepared {
-        PreparedPullResult::AlreadyPresent(existing) => Ok(existing),
-        PreparedPullResult::Ready(image_meta) => {
-            crate::deploy::check_disk_space_ostree(repo, &image_meta, imgref)?;
-            pull_from_prepared(imgref, progress, *image_meta).await
-        }
-    }
 }
 
 #[context("Creating ostree deployment")]
@@ -1198,26 +1072,26 @@ async fn install_container(
     // During install, we only use unified storage if explicitly requested.
     // Auto-detection (None) is only appropriate for upgrade/switch on a running system.
     let use_unified = state.target_opts.unified_storage_exp;
-    let progress = PullProgress::new(false, ProgressWriter::default());
 
-    let pulled_image = if use_unified {
+    let prepared = if use_unified {
         tracing::info!("Using unified storage path for installation");
-        let prepared = crate::deploy::prepare_for_pull_unified(
+        crate::deploy::prepare_for_pull_unified(
             repo,
             &spec_imgref,
             Some(&state.target_imgref),
             storage,
             None,
         )
-        .await?;
-        pull_ostree_install_from_prepared(repo, &spec_imgref, prepared, progress.clone()).await?
+        .await?
     } else {
-        let operation =
-            || pull_ostree_install_once(repo, &spec_imgref, &state.target_imgref, progress.clone());
-        if spec_imgref.transport == "registry" {
-            retry_pull_operation(&progress, operation).await?
-        } else {
-            operation().await?
+        prepare_for_pull(repo, &spec_imgref, Some(&state.target_imgref), None).await?
+    };
+
+    let pulled_image = match prepared {
+        PreparedPullResult::AlreadyPresent(existing) => existing,
+        PreparedPullResult::Ready(image_meta) => {
+            crate::deploy::check_disk_space_ostree(repo, &image_meta, &spec_imgref)?;
+            pull_from_prepared(&spec_imgref, false, ProgressWriter::default(), *image_meta).await?
         }
     };
 
@@ -1331,7 +1205,7 @@ async fn install_container(
     if let Some(policy) = sepolicy {
         let deployment_root_meta = root.dir_metadata()?;
         let deployment_root_devino = (deployment_root_meta.dev(), deployment_root_meta.ino());
-        for d in ["ostree", BOOT] {
+        for d in ["ostree", "boot"] {
             let mut pathbuf = Utf8PathBuf::from(d);
             crate::lsm::ensure_dir_labeled_recurse(
                 &root_setup.physical_root,
@@ -1342,14 +1216,11 @@ async fn install_container(
             .with_context(|| format!("Recursive SELinux relabeling of {d}"))?;
         }
 
-        if let Some(cfs_super) = root.open_optional(ostree_prepareroot::COMPOSEFS_IMAGE)? {
+        if let Some(cfs_super) = root.open_optional(OSTREE_COMPOSEFS_SUPER)? {
             let label = crate::lsm::require_label(policy, "/usr".into(), 0o644)?;
             crate::lsm::set_security_selinux(cfs_super.as_fd(), label.as_bytes())?;
         } else {
-            tracing::warn!(
-                "Missing {}; composefs is not enabled?",
-                ostree_prepareroot::COMPOSEFS_IMAGE
-            );
+            tracing::warn!("Missing {OSTREE_COMPOSEFS_SUPER}; composefs is not enabled?");
         }
     }
 
@@ -1365,7 +1236,7 @@ async fn install_container(
     }
 
     if let Some(contents) = state.root_ssh_authorized_keys.as_deref() {
-        osconfig::inject_root_ssh_authorized_keys(&root, &root, sepolicy, contents)?;
+        osconfig::inject_root_ssh_authorized_keys(&root, sepolicy, contents)?;
     }
 
     let aleph = InstallAleph::new(
@@ -1507,7 +1378,6 @@ impl SELinuxFinalState {
 pub(crate) fn reexecute_self_for_selinux_if_needed(
     srcdata: &SourceInfo,
     override_disable_selinux: bool,
-    reexec_env: &[(&str, &str)],
 ) -> Result<SELinuxFinalState> {
     // If the target state has SELinux enabled, we need to check the host state.
     if srcdata.selinux {
@@ -1524,7 +1394,7 @@ pub(crate) fn reexecute_self_for_selinux_if_needed(
             // so let's just fall through to that.
             setup_sys_mount("selinuxfs", SELINUXFS)?;
             // This will re-execute the current process (once).
-            let g = crate::lsm::selinux_ensure_install_or_setenforce(reexec_env)?;
+            let g = crate::lsm::selinux_ensure_install_or_setenforce()?;
             SELinuxFinalState::Enabled(g)
         } else {
             SELinuxFinalState::HostDisabled
@@ -1671,9 +1541,6 @@ async fn verify_target_fetch(
     Ok(())
 }
 
-/// Carries the content of `--root-ssh-authorized-keys` across re-execs; see `prepare_install`.
-const ROOT_SSH_AUTHORIZED_KEYS_ENV: &str = "_BOOTC_ROOT_SSH_AUTHORIZED_KEYS";
-
 /// Preparation for an install; validates and prepares some (thereafter immutable) global state.
 async fn prepare_install(
     mut config_opts: InstallConfigOpts,
@@ -1683,7 +1550,6 @@ async fn prepare_install(
     target_fs: Option<FilesystemEnum>,
 ) -> Result<Arc<State>> {
     tracing::trace!("Preparing install");
-    let allow_missing_verity_explicit = composefs_options.allow_missing_verity;
     let rootfs = cap_std::fs::Dir::open_ambient_dir("/", cap_std::ambient_authority())
         .context("Opening /")?;
 
@@ -1791,63 +1657,15 @@ async fn prepare_install(
 
     tracing::debug!("Composefs required: {composefs_required}");
 
-    // ostree's prepare-root.conf is read from the running root even with
-    // --source-imgref, like the install configuration: tools such as
-    // bootc-image-builder run bootc from the image they install. Convert the
-    // keyfile to a hashmap because GKeyFile isnt Send for probably bad reasons.
-    let ostree_prepareroot_config = ostree_prepareroot::load_config_from_root(&rootfs)?
-        .map(|kf| -> Result<HashMap<String, String>> {
-            let mut r = HashMap::new();
-            for grp in kf.groups() {
-                for key in kf.keys(&grp)? {
-                    let key = key.as_str();
-                    let value = kf.value(&grp, key)?;
-                    r.insert(format!("{grp}.{key}"), value.to_string());
-                }
-            }
-            Ok(r)
-        })
-        .transpose()?;
+    if composefs_required {
+        composefs_options.composefs_backend = true;
+    }
 
-    // A UKI requires the composefs backend, and a composefs-native image
-    // without ostree's configuration defaults to it.
-    let composefs_default = crate::bootc_composefs::image::defaults_to_composefs_backend(
-        &rootfs,
-        ostree_prepareroot_config.is_some(),
-    )?;
-    tracing::debug!("Composefs default: {composefs_default}");
-    composefs_options.composefs_backend |= composefs_required || composefs_default;
-    composefs_options.validate(
-        config_opts.bootloader.as_ref(),
-        config_opts.stateroot.as_deref(),
-    )?;
-
-    composefs_options.validate_bound_images(config_opts.bound_images, &rootfs)?;
-
-    // Read the file eagerly so we error out early, and before the mount changes
-    // below hide a file bind mounted under e.g. /tmp. We may re-exec further down
-    // and run this again with those mounts in place, so pass the content to the
-    // re-exec'd child via the environment.
-    let root_ssh_authorized_keys = config_opts
-        .root_ssh_authorized_keys
-        .as_ref()
-        .map(|p| -> Result<String> {
-            use std::env::VarError;
-            match std::env::var(ROOT_SSH_AUTHORIZED_KEYS_ENV) {
-                // Set by our parent
-                Ok(v) => Ok(v),
-                Err(VarError::NotPresent) => {
-                    std::fs::read_to_string(p).with_context(|| format!("Reading {p}"))
-                }
-                Err(e) => Err(e).with_context(|| format!("Parsing {ROOT_SSH_AUTHORIZED_KEYS_ENV}")),
-            }
-        })
-        .transpose()?;
-    let reexec_env: Vec<(&str, &str)> = root_ssh_authorized_keys
-        .as_deref()
-        .map(|v| (ROOT_SSH_AUTHORIZED_KEYS_ENV, v))
-        .into_iter()
-        .collect();
+    if composefs_options.composefs_backend
+        && matches!(config_opts.bootloader, Some(Bootloader::None))
+    {
+        anyhow::bail!("Bootloader set to none is not supported with the composefs backend");
+    }
 
     // We need to access devices that are set up by the host udev
     bootc_mount::ensure_mirrored_host_mount("/dev")?;
@@ -1875,14 +1693,13 @@ async fn prepare_install(
     // Even though we require running in a container, the mounts we create should be specific
     // to this process, so let's enter a private mountns to avoid leaking them.
     if !external_source && std::env::var_os("BOOTC_SKIP_UNSHARE").is_none() {
-        super::cli::ensure_self_unshared_mount_namespace(&reexec_env)?;
+        super::cli::ensure_self_unshared_mount_namespace()?;
     }
 
     setup_sys_mount("efivarfs", EFIVARFS)?;
 
     // Now, deal with SELinux state.
-    let selinux_state =
-        reexecute_self_for_selinux_if_needed(&source, config_opts.disable_selinux, &reexec_env)?;
+    let selinux_state = reexecute_self_for_selinux_if_needed(&source, config_opts.disable_selinux)?;
     tracing::debug!("SELinux state: {selinux_state:?}");
 
     println!("Installing image: {:#}", &target_imgref);
@@ -1890,12 +1707,12 @@ async fn prepare_install(
         println!("Digest: {digest}");
     }
 
-    // Don't error out if a filesystem is not passed in via cli as we could have
-    // repart.d definitions available
-    let root_filesystem = target_fs.or(install_config
-        .as_ref()
-        .and_then(|c| c.filesystem_root())
-        .and_then(|r| r.fstype));
+    let root_filesystem = target_fs
+        .or(install_config
+            .as_ref()
+            .and_then(|c| c.filesystem_root())
+            .and_then(|r| r.fstype))
+        .ok_or_else(|| anyhow::anyhow!("No root filesystem specified"))?;
 
     let mut is_uki = false;
 
@@ -1906,38 +1723,37 @@ async fn prepare_install(
     // we hard require it in that particular case
     //
     // NOTE: This isn't really 100% accurate 100% of the time as the cmdline can be in an addon
-    if let Some(root_filesystem) = root_filesystem {
-        if let Some(k) = kernel
-            && let crate::kernel::KernelType::Uki { cmdline, .. } = k.k_type
-        {
-            let allow_missing_fsverity = match cmdline {
-                Some(cmdline) => ComposefsCmdline::find_in_cmdline(&cmdline)?
-                    .is_some_and(|cfs_cmdline| cfs_cmdline.allow_missing_fsverity),
-                None => false,
-            };
+    match kernel {
+        Some(k) => match k.k_type {
+            crate::kernel::KernelType::Uki { cmdline, .. } => {
+                let allow_missing_fsverity = cmdline.is_some_and(|cmd| {
+                    ComposefsCmdline::find_in_cmdline(&cmd)
+                        .is_some_and(|cfs_cmdline| cfs_cmdline.allow_missing_fsverity)
+                });
 
-            if !allow_missing_fsverity {
-                anyhow::ensure!(
-                    root_filesystem.supports_fsverity(),
-                    "Specified filesystem {root_filesystem} does not support fs-verity"
-                );
+                if !allow_missing_fsverity {
+                    anyhow::ensure!(
+                        root_filesystem.supports_fsverity(),
+                        "Specified filesystem {root_filesystem} does not support fs-verity"
+                    );
+                }
+
+                composefs_options.allow_missing_verity = allow_missing_fsverity;
+                is_uki = true;
             }
 
-            composefs_options.allow_missing_verity = allow_missing_fsverity;
-            is_uki = true;
-        }
+            crate::kernel::KernelType::Vmlinuz { .. } => {}
+        },
 
-        // If `--allow-missing-verity` is already passed via CLI, don't modify
-        if composefs_options.composefs_backend && !composefs_options.allow_missing_verity && !is_uki
-        {
-            composefs_options.allow_missing_verity = !root_filesystem.supports_fsverity();
-        }
+        None => {}
+    }
+
+    // If `--allow-missing-verity` is already passed via CLI, don't modify
+    if composefs_options.composefs_backend && !composefs_options.allow_missing_verity && !is_uki {
+        composefs_options.allow_missing_verity = !root_filesystem.supports_fsverity();
     }
 
     tracing::info!(
-        root_filesystem = root_filesystem
-            .map(|f| f.to_string())
-            .unwrap_or("None".into()),
         allow_missing_fsverity = composefs_options.allow_missing_verity,
         uki = is_uki,
         "ComposeFS install prep",
@@ -1949,16 +1765,27 @@ async fn prepare_install(
         }
     }
 
-    // Only the ostree backend uses prepare-root.conf, and composefs-native
-    // images needn't have one.
-    let ostree_prepareroot_config = match ostree_prepareroot_config {
-        Some(c) => c,
-        None if composefs_options.composefs_backend => HashMap::new(),
-        None => anyhow::bail!(
-            "Failed to find {} in /usr/lib or /etc",
-            ostree_prepareroot::CONF_PATH
-        ),
+    // Convert the keyfile to a hashmap because GKeyFile isnt Send for probably bad reasons.
+    let prepareroot_config = {
+        let kf = ostree_prepareroot::require_config_from_root(&rootfs)?;
+        let mut r = HashMap::new();
+        for grp in kf.groups() {
+            for key in kf.keys(&grp)? {
+                let key = key.as_str();
+                let value = kf.value(&grp, key)?;
+                r.insert(format!("{grp}.{key}"), value.to_string());
+            }
+        }
+        r
     };
+
+    // Eagerly read the file now to ensure we error out early if e.g. it doesn't exist,
+    // instead of much later after we're 80% of the way through an install.
+    let root_ssh_authorized_keys = config_opts
+        .root_ssh_authorized_keys
+        .as_ref()
+        .map(|p| std::fs::read_to_string(p).with_context(|| format!("Reading {p}")))
+        .transpose()?;
 
     // Create our global (read-only) state which gets wrapped in an Arc
     // so we can pass it to worker threads too. Right now this just
@@ -1970,18 +1797,13 @@ async fn prepare_install(
         target_opts,
         target_imgref,
         install_config,
-        ostree_prepareroot_config,
+        prepareroot_config,
         root_ssh_authorized_keys,
         container_root: rootfs,
         tempdir,
         host_is_container,
         composefs_required,
         composefs_options,
-        // assume fs-verity is supported as that's the safer option
-        composefs_fsverity_supported: root_filesystem
-            .map(|fs| fs.supports_fsverity())
-            .unwrap_or(true),
-        allow_missing_verity_explicit,
     });
 
     Ok(state)
@@ -2051,7 +1873,7 @@ async fn install_with_sysroot(
                     .clone()
                     .unwrap_or(rootfs.physical_root_path.clone());
                 let chroot_target = root_path.join(deployment_path.as_str());
-                let bind_boot_path = root_path.join(BOOT);
+                let bind_boot_path = root_path.join("boot");
                 crate::bootloader::install_via_bootupd(
                     &rootfs.device_info,
                     &root_path,
@@ -2200,62 +2022,45 @@ async fn install_to_filesystem_impl(
     }
 
     if state.composefs_options.composefs_backend {
-        let fetch_ref = state.source.composefs_fetch_reference();
-        let manifest = get_container_manifest_and_config(&fetch_ref).await?;
-        // A capable filesystem gets a strict provisional repository.  The
-        // imported image is inspected below; only a fresh repository may then
-        // atomically adopt the image's explicit relaxed policy.
-        let provisional_relaxed = !state.composefs_fsverity_supported;
-        let fetch_imgref = Some(fetch_ref.clone().into());
-        let initialized = initialize_composefs_repository(state, rootfs, provisional_relaxed)?;
-        crate::deploy::check_disk_space_composefs(
-            &initialized.repo,
-            &manifest.manifest,
-            &ImageReference {
-                image: fetch_ref.name.clone(),
-                transport: fetch_ref.transport.to_string(),
-                signature: None,
-            },
-        )?;
-        let pull_result = pull_install_composefs_repository(
+        // Pre-flight disk space check for native composefs install path.
+        {
+            let imgref = &state.source.imageref;
+            let img_manifest_config = get_container_manifest_and_config(&imgref).await?;
+            crate::store::ensure_composefs_dir(&rootfs.physical_root)?;
+            // Use init_path since the repo may not exist yet during install
+            let config =
+                RepositoryConfig::new(composefs_ctl::composefs::fsverity::Algorithm::SHA512)
+                    .set_insecure();
+            let (cfs_repo, _created) = crate::store::ComposefsRepository::init_path(
+                &rootfs.physical_root,
+                crate::store::COMPOSEFS,
+                config,
+            )?;
+            crate::deploy::check_disk_space_composefs(
+                &cfs_repo,
+                &img_manifest_config.manifest,
+                &crate::spec::ImageReference {
+                    image: imgref.name.clone(),
+                    transport: imgref.transport.to_string(),
+                    signature: None,
+                },
+            )?;
+        }
+        let pull_result = initialize_composefs_repository(
             state,
             rootfs,
-            &initialized.repo,
+            state.composefs_options.allow_missing_verity,
             state.target_opts.unified_storage_exp,
-            fetch_imgref.as_ref(),
         )
         .await?;
-        let uki_policy =
-            crate::bootc_composefs::repo::inspect_uki_policy(&initialized.repo, &pull_result)?;
 
-        let requested_relaxed = crate::bootc_composefs::repo::final_repository_policy(
-            uki_policy,
+        setup_composefs_boot(
+            rootfs,
+            state,
+            &pull_result,
             state.composefs_options.allow_missing_verity,
-        );
-        if !initialized.created {
-            validate_repository_policy(
-                initialized.repository_insecure,
-                requested_relaxed,
-                state.allow_missing_verity_explicit,
-            )?;
-        } else if !requested_relaxed && provisional_relaxed {
-            anyhow::bail!(
-                "Initial UKI requires fs-verity, but the target filesystem does not support it"
-            );
-        }
-        // Repository handles retain LOCK_SH, so no Arc may remain before the
-        // fresh-policy replacement below takes LOCK_EX.
-        drop(initialized.repo);
-        if initialized.created && requested_relaxed && !provisional_relaxed {
-            finalize_fresh_repository_policy(
-                &rootfs.physical_root,
-                crate::bootc_composefs::repo::composefs_repository_config(false),
-            )?;
-        }
-        let allow_missing_verity = requested_relaxed;
-        tag_pulled_image(&rootfs.physical_root, &pull_result)?;
-
-        setup_composefs_boot(rootfs, state, &pull_result, allow_missing_verity).await?;
+        )
+        .await?;
 
         // Label composefs objects as /usr so they get usr_t rather than
         // default_t (which has no policy match).
@@ -2274,7 +2079,7 @@ async fn install_to_filesystem_impl(
 
         // For s390x, we set zipl as the bootloader
         // this needs to be done after the ostree commit is deployed,
-        // as we don't want zipl to run during the initial ostree deployment.
+        // as we don't want zipl to run during the initial ostree deployement.
         if cfg!(target_arch = "s390x") {
             Command::new("ostree")
                 .args([
@@ -2305,7 +2110,7 @@ async fn install_to_filesystem_impl(
 
     // Finalize mounted filesystems
     if !rootfs.skip_finalize {
-        let bootfs = rootfs.boot.as_ref().map(|_| ("boot", BOOT));
+        let bootfs = rootfs.boot.as_ref().map(|_| ("boot", "boot"));
         for (fsname, fs) in std::iter::once(("root", ".")).chain(bootfs) {
             finalize_filesystem(fsname, &rootfs.physical_root, fs)?;
         }
@@ -2386,7 +2191,7 @@ pub(crate) async fn install_to_disk(mut opts: InstallToDiskOpts) -> Result<()> {
 
         let state = state.clone();
         let rootfs = tokio::task::spawn_blocking(move || {
-            baseline::install_create_rootfs(&state, block_opts, opts.run_repart)
+            baseline::install_create_rootfs(&state, block_opts)
         })
         .await??;
         (rootfs, loopback_dev)
@@ -2494,25 +2299,17 @@ fn remove_all_in_dir_no_xdev(d: &Dir, mount_err: bool) -> Result<()> {
         let name = entry.file_name();
         let etype = entry.file_type()?;
         if etype == FileType::dir() {
-            remove_dir_no_xdev(d, &name, mount_err)?;
+            if let Some(subdir) = d.open_dir_noxdev(&name)? {
+                remove_all_in_dir_no_xdev(&subdir, mount_err)?;
+                d.remove_dir(&name)?;
+            } else if mount_err {
+                anyhow::bail!("Found unexpected mount point {name:?}");
+            }
         } else {
             d.remove_file_optional(&name)?;
         }
     }
     anyhow::Ok(())
-}
-
-/// Recursively remove the directory `name` in `d`, without crossing devices.
-/// A mount point is left alone, or is an error if `mount_err` is true.
-fn remove_dir_no_xdev(d: &Dir, name: impl AsRef<Path>, mount_err: bool) -> Result<()> {
-    let name = name.as_ref();
-    if let Some(subdir) = d.open_dir_noxdev(name)? {
-        remove_all_in_dir_no_xdev(&subdir, mount_err)?;
-        d.remove_dir(name)?;
-    } else if mount_err {
-        anyhow::bail!("Found unexpected mount point {name:?}");
-    }
-    Ok(())
 }
 
 #[context("Removing boot directory content except loader dir on ostree")]
@@ -2539,28 +2336,16 @@ fn remove_all_except_loader_dirs(bootdir: &Dir, is_ostree: bool) -> Result<()> {
 
         let etype = entry.file_type()?;
         if etype == FileType::dir() {
-            remove_dir_no_xdev(bootdir, file_name, false)
-                .with_context(|| format!("Removing directory: {file_name}"))?;
+            // Open the directory and remove its contents
+            if let Some(subdir) = bootdir.open_dir_noxdev(&file_name)? {
+                remove_all_in_dir_no_xdev(&subdir, false)
+                    .with_context(|| format!("Removing directory contents: {}", file_name))?;
+                bootdir.remove_dir(&file_name)?;
+            }
         } else {
             bootdir
                 .remove_file_optional(&file_name)
                 .with_context(|| format!("Removing file: {}", file_name))?;
-        }
-    }
-    Ok(())
-}
-
-/// Remove the bootloader dirs (bootupd/grub, systemd-boot) from the ESP.
-/// Other content, e.g. Asahi's `m1n1/` and `vendorfw/`, may be firmware
-/// or earlier boot stages we cannot recreate, so it is preserved.
-// TODO: be more selective, e.g. keep other OSes' `EFI/<vendor>` and
-// non-bootc `loader/` entries, and drop old Type #1 kernels (see #2243).
-#[context("Removing bootloader content from EFI system partition")]
-fn clean_esp_bootloader_dirs(efidir: &Dir) -> Result<()> {
-    for name in ["EFI", "loader"] {
-        if efidir.try_exists(name)? {
-            remove_dir_no_xdev(efidir, name, false)
-                .with_context(|| format!("Removing directory: {name}"))?;
         }
     }
     Ok(())
@@ -2580,12 +2365,13 @@ fn clean_boot_directories(rootfs: &Dir, rootfs_path: &Utf8Path, is_ostree: bool)
     // This should not remove /boot/efi note.
     remove_all_except_loader_dirs(&bootdir, is_ostree).context("Emptying /boot")?;
 
+    // TODO: we should also support not wiping the ESP.
     if ARCH_USES_EFI {
         if let Some(efidir) = bootdir
             .open_dir_optional(crate::bootloader::EFI_DIR)
             .context("Opening /boot/efi")?
         {
-            clean_esp_bootloader_dirs(&efidir)?;
+            remove_all_in_dir_no_xdev(&efidir, false).context("Emptying EFI system partition")?;
         }
     }
 
@@ -2883,7 +2669,7 @@ pub(crate) async fn install_to_filesystem(
         if spec.is_empty() {
             None
         } else {
-            Some(MountSpec::new(&spec, &format!("/{BOOT}")))
+            Some(MountSpec::new(&spec, "/boot"))
         }
     } else {
         // Read /etc/fstab to get boot entry, but only use it if it's UUID-based
@@ -2893,7 +2679,7 @@ pub(crate) async fn install_to_filesystem(
             .or_else(|| {
                 boot_uuid
                     .as_deref()
-                    .map(|boot_uuid| MountSpec::new_uuid_src(boot_uuid, &format!("/{BOOT}")))
+                    .map(|boot_uuid| MountSpec::new_uuid_src(boot_uuid, "/boot"))
             })
     };
     // Ensure that we mount /boot readonly because it's really owned by bootc/ostree
@@ -3019,7 +2805,7 @@ fn read_boot_fstab_entry(root: &Dir) -> Result<Option<MountSpec>> {
         let spec = MountSpec::from_str(line)?;
 
         // Check if this is a /boot entry
-        if spec.target == format!("/{BOOT}") {
+        if spec.target == "/boot" {
             return Ok(Some(spec));
         }
     }
@@ -3178,127 +2964,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_composefs_opts_validate() {
-        let addon = || Some(vec!["addon".to_string()]);
-        // (composefs_backend, allow_missing_verity, uki_addon, bootloader, stateroot, valid)
-        let cases = [
-            (false, false, None, None, None, true),
-            (false, false, None, Some(Bootloader::None), None, true),
-            (false, true, None, None, None, false),
-            (false, false, addon(), None, None, false),
-            (false, false, None, None, Some("myroot"), true),
-            (true, false, None, None, None, true),
-            (true, true, addon(), Some(Bootloader::Systemd), None, true),
-            (true, false, None, Some(Bootloader::None), None, false),
-            (true, false, None, None, Some("default"), true),
-            (true, false, None, None, Some("myroot"), false),
-        ];
-        for (composefs_backend, allow_missing_verity, uki_addon, bootloader, stateroot, valid) in
-            cases
-        {
-            let opts = InstallComposefsOpts {
-                composefs_backend,
-                allow_missing_verity,
-                uki_addon,
-            };
-            assert_eq!(
-                opts.validate(bootloader.as_ref(), stateroot).is_ok(),
-                valid,
-                "{opts:?} {bootloader:?} {stateroot:?}"
-            );
-        }
-
-        let opts = InstallComposefsOpts {
-            composefs_backend: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            opts.validate(None, Some("myroot")).unwrap_err().to_string(),
-            "--stateroot myroot is not supported with the composefs backend, which only uses default"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "install-to-disk")]
     fn install_opts_serializable() {
         let c: InstallToDiskOpts = serde_json::from_value(serde_json::json!({
             "device": "/dev/vda"
         }))
         .unwrap();
         assert_eq!(c.block_opts.device, "/dev/vda");
-    }
-
-    #[test]
-    fn test_composefs_opts_validate_bound_images() -> Result<()> {
-        use crate::boundimage::BOUND_IMAGE_DIR;
-        let unbound = cap_std_ext::cap_tempfile::TempDir::new(cap_std::ambient_authority())?;
-        unbound.create_dir_all(BOUND_IMAGE_DIR)?;
-        let bound = cap_std_ext::cap_tempfile::TempDir::new(cap_std::ambient_authority())?;
-        bound.create_dir_all("usr/share/containers/systemd")?;
-        bound.write(
-            "usr/share/containers/systemd/app.image",
-            "[Image]\nImage=quay.io/example/app:latest\n",
-        )?;
-        bound.create_dir_all(BOUND_IMAGE_DIR)?;
-        bound.symlink_contents(
-            "/usr/share/containers/systemd/app.image",
-            format!("{BOUND_IMAGE_DIR}/app.image"),
-        )?;
-
-        // (composefs_backend, bound_images, root binds an image, valid)
-        let cases = [
-            (false, BoundImagesOpt::Stored, true, true),
-            (true, BoundImagesOpt::Stored, false, true),
-            (true, BoundImagesOpt::Stored, true, false),
-            (true, BoundImagesOpt::Pull, true, false),
-            (true, BoundImagesOpt::Skip, true, true),
-        ];
-        for (composefs_backend, bound_images, binds, valid) in cases {
-            let opts = InstallComposefsOpts {
-                composefs_backend,
-                ..Default::default()
-            };
-            let root = if binds { &bound } else { &unbound };
-            assert_eq!(
-                opts.validate_bound_images(bound_images, root).is_ok(),
-                valid,
-                "{opts:?} {bound_images:?} {binds}"
-            );
-        }
-
-        let opts = InstallComposefsOpts {
-            composefs_backend: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            opts.validate_bound_images(BoundImagesOpt::Stored, &bound)
-                .unwrap_err()
-                .to_string(),
-            "Logically bound images are not supported with the composefs backend (found quay.io/example/app:latest); use --bound-images skip to install without them"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn source_fetch_reference_uses_config_id_for_host_images() {
-        let cases = [
-            (
-                "containers-storage:localhost/os:latest",
-                Some("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
-                "containers-storage:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            ),
-            (
-                "docker://quay.io/example/os:latest",
-                None,
-                "docker://quay.io/example/os:latest",
-            ),
-            ("oci:/tmp/image", None, "oci:/tmp/image"),
-        ];
-        for (original, config_id, expected) in cases {
-            let original = original.parse().unwrap();
-            let fetched = composefs_fetch_reference(&original, config_id);
-            assert_eq!(fetched.to_string(), expected);
-        }
     }
 
     #[test]
@@ -3375,32 +3046,6 @@ mod tests {
         remove_all_in_dir_no_xdev(&td, true).unwrap();
 
         assert_eq!(td.entries()?.count(), 0);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_clean_esp_bootloader_dirs() -> Result<()> {
-        let td = cap_std_ext::cap_tempfile::TempDir::new(cap_std::ambient_authority())?;
-
-        td.create_dir_all("EFI/BOOT")?;
-        td.write("EFI/BOOT/BOOTAA64.EFI", b"shim")?;
-        td.create_dir_all("loader/entries")?;
-        td.write("loader/entries/foo.conf", b"entry")?;
-        // Asahi content which must survive
-        td.create_dir_all("m1n1")?;
-        td.write("m1n1/boot.bin", b"m1n1")?;
-        td.write("ubootefi.var", b"efivars")?;
-
-        clean_esp_bootloader_dirs(&td)?;
-        assert!(!td.exists("EFI"));
-        assert!(!td.exists("loader"));
-        assert_eq!(td.read("m1n1/boot.bin")?, b"m1n1");
-        assert_eq!(td.read("ubootefi.var")?, b"efivars");
-
-        // Idempotent
-        clean_esp_bootloader_dirs(&td)?;
-        assert_eq!(td.entries()?.count(), 2);
 
         Ok(())
     }

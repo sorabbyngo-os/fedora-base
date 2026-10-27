@@ -17,7 +17,6 @@ use clap::CommandFactory;
 use clap::Parser;
 use clap::ValueEnum;
 use composefs::dumpfile;
-use composefs::erofs::format::FormatVersion;
 use composefs::fsverity;
 use composefs::fsverity::FsVerityHashValue;
 use composefs_ctl::composefs;
@@ -42,7 +41,6 @@ use serde::{Deserialize, Serialize};
 use crate::bootc_composefs::delete::delete_composefs_deployment;
 use crate::bootc_composefs::gc::{GCOpts, composefs_gc};
 use crate::bootc_composefs::soft_reboot::{prepare_soft_reboot_composefs, reset_soft_reboot};
-use crate::bootc_composefs::state::get_usr_overlay_status;
 use crate::bootc_composefs::{
     digest::{compute_composefs_digest, new_temp_composefs_repo},
     finalize::{composefs_backend_finalize, get_etc_diff},
@@ -120,14 +118,13 @@ pub(crate) struct UpgradeOpts {
 
     /// Restart or reboot into the new target image.
     ///
-    /// Use --soft-reboot to request a userspace-only restart when supported.
+    /// Currently, this always reboots. Future versions may support userspace-only restart.
     #[clap(long, conflicts_with = "check")]
     pub(crate) apply: bool,
 
     /// Configure soft reboot behavior.
     ///
-    /// 'required' fails if soft reboot is unavailable; 'auto' uses it when possible.
-    /// See bootc-upgrades(7) for backend-specific fallback behavior.
+    /// 'required' fails if soft reboot unavailable, 'auto' falls back to regular reboot.
     #[clap(long = "soft-reboot", conflicts_with = "check")]
     pub(crate) soft_reboot: Option<SoftRebootMode>,
 
@@ -154,14 +151,13 @@ pub(crate) struct SwitchOpts {
 
     /// Restart or reboot into the new target image.
     ///
-    /// Use --soft-reboot to request a userspace-only restart when supported.
+    /// Currently, this always reboots. Future versions may support userspace-only restart.
     #[clap(long)]
     pub(crate) apply: bool,
 
     /// Configure soft reboot behavior.
     ///
-    /// 'required' fails if soft reboot is unavailable; 'auto' uses it when possible.
-    /// See bootc-upgrades(7) for backend-specific fallback behavior.
+    /// 'required' fails if soft reboot unavailable, 'auto' falls back to regular reboot.
     #[clap(long = "soft-reboot")]
     pub(crate) soft_reboot: Option<SoftRebootMode>,
 
@@ -213,19 +209,6 @@ pub(crate) struct SwitchOpts {
 
     #[clap(flatten)]
     pub(crate) progress: ProgressOptions,
-}
-
-/// Finalize a staged composefs deployment.
-///
-/// This is invoked at shutdown by `bootc-finalize-staged.service`.
-#[derive(Debug, Parser, PartialEq, Eq)]
-pub(crate) struct ComposefsFinalizeStagedOpts {
-    /// Hold /boot open until terminated, instead of finalizing.
-    ///
-    /// This is used by `bootc-finalize-staged-hold.service` to keep an
-    /// automounted /boot from expiring while a deployment is staged.
-    #[clap(long)]
-    pub(crate) hold: bool,
 }
 
 /// Options controlling rollback
@@ -283,7 +266,7 @@ pub(crate) enum SoftRebootMode {
 pub(crate) struct StatusOpts {
     /// Output in JSON format.
     ///
-    /// Superseded by the `format` option.
+    /// Superceded by the `format` option.
     #[clap(long, hide = true)]
     pub(crate) json: bool,
 
@@ -319,8 +302,6 @@ pub(crate) struct UsrOverlayOpts {
 
 #[derive(Debug, clap::Subcommand, PartialEq, Eq)]
 pub(crate) enum InstallOpts {
-    /// Mount an installed deployment into a caller-owned directory.
-    Mount(crate::mount::MountOpts),
     /// Install to the target block device.
     ///
     /// This command must be invoked inside of the container, which will be
@@ -430,39 +411,22 @@ pub(crate) enum ContainerOpts {
         no_truncate: bool,
     },
     /// Output the bootable composefs digest for a directory.
-    ///
-    /// This is the digest that `bootc container ukify` embeds in the kernel
-    /// command line of a UKI. It is useful for scripting and debugging outside
-    /// of that flow.
+    #[clap(hide = true)]
     ComputeComposefsDigest {
         /// Path to the filesystem root
         #[clap(default_value = "/target")]
         path: Utf8PathBuf,
 
-        /// Additionally generate a dumpfile for the preferred digest, written to the target path
+        /// Additionally generate a dumpfile written to the target path
         #[clap(long)]
         write_dumpfile_to: Option<Utf8PathBuf>,
-
-        /// EROFS format version to use when computing the composefs digest.
-        ///
-        /// V1 produces a `composefs.digest=v1-sha512-12:<hex>` karg (C-tool compatible).
-        /// V2 produces the legacy `composefs=<hex>` karg (composefs-rs native).
-        #[clap(long, default_value = "v1")]
-        erofs_version: ErofsVersionArg,
     },
     /// Output the bootable composefs digest from container storage.
     #[clap(hide = true)]
     ComputeComposefsDigestFromStorage {
-        /// Additionally generate a dumpfile for the preferred digest, written to the target path
+        /// Additionally generate a dumpfile written to the target path
         #[clap(long)]
         write_dumpfile_to: Option<Utf8PathBuf>,
-
-        /// EROFS format version to use when computing the composefs digest.
-        ///
-        /// Must match the format used by `compute-composefs-digest` (and by
-        /// `container ukify`) for the two views to be comparable.
-        #[clap(long, default_value = "v1")]
-        erofs_version: ErofsVersionArg,
 
         /// Identifier for image; if not provided, the running image will be used.
         image: Option<String>,
@@ -471,12 +435,10 @@ pub(crate) enum ContainerOpts {
     ///
     /// This command extracts the kernel (vmlinuz and initramfs.img) from the
     /// container rootfs and moves them to a separate output directory, organized
-    /// by kernel version. Files that belong to the kernel binary are moved
-    /// along with it, currently the FIPS HMAC file (.vmlinuz.hmac) that Fedora
-    /// and RHEL derivatives ship.
+    /// by kernel version
     ///
     /// Example:
-    ///   bootc container split-kernel-and-rootfs --rootfs /target-rootfs --output /out
+    ///   bootc container split-kernel-rootfs --rootfs /target-rootfs --output /out
     SplitKernelAndRootfs {
         /// Operate on the provided rootfs
         #[clap(long, default_value = "/")]
@@ -508,15 +470,6 @@ pub(crate) enum ContainerOpts {
         /// Make fs-verity validation optional in case the filesystem doesn't support it
         #[clap(long)]
         allow_missing_verity: bool,
-
-        /// EROFS format version to use when computing the composefs digest.
-        ///
-        /// By default, produce V1 then V2 kargs for compatibility. V1 produces a
-        /// `composefs.digest=v1-sha512-12:<hex>` karg (C-tool compatible), while V2
-        /// produces the legacy `composefs=<hex>` karg (composefs-rs native).
-        /// Explicit V2 produces only the V2 karg as a compatibility escape hatch.
-        #[clap(long)]
-        erofs_version: Option<ErofsVersionArg>,
 
         /// Write a dumpfile to this path
         #[clap(long)]
@@ -562,24 +515,6 @@ pub(crate) enum ContainerOpts {
         /// Path to the container filesystem root
         target: Utf8PathBuf,
     },
-}
-
-/// EROFS format version for `bootc container ukify --erofs-version`.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub(crate) enum ErofsVersionArg {
-    /// V1 EROFS (C-tool compatible, `composefs.digest=v1-sha512-12:<hex>` karg).  Default.
-    V1,
-    /// V2 EROFS (composefs-rs native, `composefs=` karg).
-    V2,
-}
-
-impl From<ErofsVersionArg> for FormatVersion {
-    fn from(v: ErofsVersionArg) -> Self {
-        match v {
-            ErofsVersionArg::V1 => FormatVersion::V1,
-            ErofsVersionArg::V2 => FormatVersion::V2,
-        }
-    }
 }
 
 #[derive(Debug, Clone, ValueEnum, PartialEq, Eq)]
@@ -748,7 +683,6 @@ pub(crate) enum UkiSubcommands {
 }
 
 /// Subcommands for `bootc internals selinux`.
-#[cfg(feature = "selinux")]
 #[derive(Debug, clap::Subcommand, PartialEq, Eq)]
 pub(crate) enum SelinuxOpts {
     /// Exit successfully when PATH is unlabeled; otherwise exit with status 1.
@@ -759,7 +693,7 @@ pub(crate) enum SelinuxOpts {
     },
 }
 
-pub(crate) fn parse_absolute_path(value: &str) -> std::result::Result<Utf8PathBuf, String> {
+fn parse_absolute_path(value: &str) -> std::result::Result<Utf8PathBuf, String> {
     let path = Utf8PathBuf::from(value);
     if path.is_absolute() {
         Ok(path)
@@ -789,7 +723,6 @@ pub(crate) enum InternalsOpts {
     },
     #[clap(subcommand)]
     Fsverity(FsverityOpts),
-    #[cfg(feature = "selinux")]
     #[clap(subcommand)]
     Selinux(SelinuxOpts),
     /// Perform consistency checking.
@@ -962,9 +895,6 @@ pub(crate) enum LoaderEntriesOpts {
     SetOptionsForSource(SetOptionsForSourceOpts),
 }
 
-/// The name of the `bootc loader-entries` subcommand.
-const LOADER_ENTRIES_SUBCOMMAND: &str = "loader-entries";
-
 #[derive(Debug, clap::Subcommand, PartialEq, Eq)]
 pub(crate) enum StateOpts {
     /// Remove all ostree deployments from this system
@@ -1073,10 +1003,7 @@ pub(crate) enum Opt {
     /// Operations on Boot Loader Specification (BLS) entries.
     ///
     /// Manage kernel arguments from multiple independent sources.
-    //
-    // Unavailable on hosts whose ostree lacks `bootconfig-extra` support;
-    // see `apply_host_feature_gates`.
-    #[clap(subcommand, name = LOADER_ENTRIES_SUBCOMMAND)]
+    #[clap(subcommand)]
     LoaderEntries(LoaderEntriesOpts),
     /// Execute the given command in the host mount namespace
     #[clap(hide = true)]
@@ -1091,8 +1018,7 @@ pub(crate) enum Opt {
     #[clap(subcommand)]
     #[clap(hide = true)]
     Internals(InternalsOpts),
-    #[clap(hide = true)]
-    ComposefsFinalizeStaged(ComposefsFinalizeStagedOpts),
+    ComposefsFinalizeStaged,
     /// Diff current /etc configuration versus default
     #[clap(hide = true)]
     ConfigDiff,
@@ -1106,7 +1032,9 @@ pub(crate) enum Opt {
         shell: clap_complete::aot::Shell,
     },
     #[clap(hide = true)]
-    DeleteDeployment { depl_id: String },
+    DeleteDeployment {
+        depl_id: String,
+    },
 }
 
 /// Ensure we've entered a mount namespace, so that we can remount
@@ -1114,7 +1042,7 @@ pub(crate) enum Opt {
 /// TODO use <https://github.com/ostreedev/ostree/pull/2779> once
 /// we can depend on a new enough ostree
 #[context("Ensuring mountns")]
-pub(crate) fn ensure_self_unshared_mount_namespace(reexec_env: &[(&str, &str)]) -> Result<()> {
+pub(crate) fn ensure_self_unshared_mount_namespace() -> Result<()> {
     let uid = rustix::process::getuid();
     if !uid.is_root() {
         tracing::debug!("Not root, assuming no need to unshare");
@@ -1144,7 +1072,6 @@ pub(crate) fn ensure_self_unshared_mount_namespace(reexec_env: &[(&str, &str)]) 
     bootc_utils::reexec::reexec_with_guardenv(
         recurse_env,
         &["unshare", "-m", "--propagation=slave", "--"],
-        reexec_env,
     )
 }
 
@@ -1302,8 +1229,8 @@ pub(crate) fn prepare_for_write() -> Result<()> {
         anyhow::bail!("Detected container; this command requires a booted host system.");
     }
     crate::cli::require_root(false)?;
-    ensure_self_unshared_mount_namespace(&[])?;
-    if crate::lsm::selinux_enabled() && !crate::lsm::selinux_ensure_install(&[])? {
+    ensure_self_unshared_mount_namespace()?;
+    if crate::lsm::selinux_enabled() && !crate::lsm::selinux_ensure_install()? {
         tracing::debug!("Do not have install_t capabilities");
     }
     ENTERED.store(true, Ordering::SeqCst);
@@ -1315,7 +1242,7 @@ struct ApplyFromDownloadedOpts {
     apply: bool,
 }
 
-async fn apply_from_downloaded_ostree(
+fn apply_from_downloaded_ostree(
     storage: &Storage,
     booted_ostree: &BootedOstree<'_>,
     host: &crate::spec::Host,
@@ -1327,7 +1254,6 @@ async fn apply_from_downloaded_ostree(
         .ok_or_else(|| anyhow::anyhow!("No staged deployment found"))?;
 
     if staged_deployment.is_finalization_locked() {
-        crate::boundimage::pull_bound_images(storage, &staged_deployment).await?;
         ostree.change_finalization(&staged_deployment)?;
         println!("Staged deployment will now be applied on reboot");
     } else {
@@ -1404,8 +1330,7 @@ async fn upgrade(
                 soft_reboot: opts.soft_reboot,
                 apply: opts.apply,
             },
-        )
-        .await;
+        );
     }
 
     // Ensure the bootc storage directory is initialized; the --check path
@@ -1586,8 +1511,7 @@ async fn switch_ostree(
                 soft_reboot: opts.soft_reboot,
                 apply: opts.apply,
             },
-        )
-        .await;
+        );
     }
 
     let target = imgref_for_switch(&opts)?;
@@ -1848,12 +1772,6 @@ async fn edit(opts: EditOpts) -> Result<()> {
 
 /// Implementation of `bootc usroverlay`
 async fn usroverlay(access_mode: FilesystemOverlayAccessMode) -> Result<()> {
-    let status = get_usr_overlay_status()?;
-    if status.is_some() {
-        println!("An overlayfs is already mounted on /usr");
-        return Ok(());
-    }
-
     // This is just a pass-through today.  At some point we may make this a libostree API
     // or even oxidize it.
     let args = match access_mode {
@@ -1940,7 +1858,6 @@ pub enum CliExitStatus {
     PredicateFalse,
 }
 
-#[cfg(feature = "selinux")]
 fn is_unlabeled_exit_status(
     state: crate::lsm::SELinuxLabelState,
     path: &Utf8Path,
@@ -2000,86 +1917,14 @@ impl Opt {
             };
             if let Some(base_args) = mapped {
                 let base_args = base_args.iter().map(OsString::from);
-                return Opt::parse_from_host(base_args.chain(args.map(|i| i.into())));
+                return Opt::parse_from(base_args.chain(args.map(|i| i.into())));
             }
             Some(first)
         } else {
             None
         };
-        Opt::parse_from_host(first.into_iter().chain(args.map(|i| i.into())))
+        Opt::parse_from(first.into_iter().chain(args.map(|i| i.into())))
     }
-
-    /// Equivalent to [`clap::Parser::parse_from`], but with host feature gates
-    /// applied so that `--help` and error output only advertise what this host
-    /// supports, and gated subcommands are rejected before being dispatched.
-    ///
-    /// [`Opt::command`] always describes the full CLI; it is what documentation
-    /// and shell completions are generated from, so those don't vary with the
-    /// ostree version on the build host.
-    fn parse_from_host<I>(args: I) -> Self
-    where
-        I: IntoIterator,
-        I::Item: Into<OsString> + Clone,
-    {
-        use clap::FromArgMatches;
-        let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
-        let bootconfig_extra = crate::loader_entries::ostree_supports_bootconfig_extra();
-        let host_command = || apply_host_feature_gates(Opt::command(), bootconfig_extra);
-        // A gated subcommand is rejected whatever its arguments, `--help`
-        // included, with a distinct exit status so that a caller probing for
-        // the feature can tell "unsupported here" from a usage error.
-        if host_feature_gate_rejects(&args, bootconfig_extra) {
-            let err = host_command().error(
-                clap::error::ErrorKind::InvalidSubcommand,
-                crate::loader_entries::unsupported_ostree_error(),
-            );
-            // Only stderr can fail here, and we're exiting anyway.
-            let _ = err.print();
-            std::process::exit(EXIT_UNAVAILABLE);
-        }
-        let mut matches = host_command().get_matches_from(args);
-        match Self::from_arg_matches_mut(&mut matches) {
-            Ok(opt) => opt,
-            Err(e) => e.format(&mut host_command()).exit(),
-        }
-    }
-}
-
-/// Exit status when a subcommand is unavailable because the running host
-/// lacks the feature behind it (see [`host_feature_gate_rejects`]).  Distinct
-/// from a usage error (2) and a runtime failure (1) so that a caller probing
-/// for the feature, as TuneD does with
-/// `bootc loader-entries set-options-for-source --help`, can tell
-/// "not supported here" from "failed".  77 is the status test harnesses use
-/// for "skipped".
-pub const EXIT_UNAVAILABLE: i32 = 77;
-
-/// Hide subcommands whose backing functionality is missing on the running
-/// host from `--help`.  Invoking one is rejected before parsing by
-/// [`host_feature_gate_rejects`].
-///
-/// `bootconfig_extra` is whether the host ostree supports `bootconfig-extra`,
-/// which `loader-entries` requires; see
-/// [`crate::loader_entries::ostree_supports_bootconfig_extra`].
-fn apply_host_feature_gates(cmd: clap::Command, bootconfig_extra: bool) -> clap::Command {
-    if bootconfig_extra {
-        return cmd;
-    }
-    cmd.mut_subcommand(LOADER_ENTRIES_SUBCOMMAND, |c| c.hide(true))
-}
-
-/// Whether `args` (argv, including argv0) invoke a subcommand that
-/// [`apply_host_feature_gates`] made unavailable.  The top-level command has
-/// no options that take a value, so the first non-option argument is the
-/// subcommand name.
-fn host_feature_gate_rejects(args: &[OsString], bootconfig_extra: bool) -> bool {
-    if bootconfig_extra {
-        return false;
-    }
-    args.iter()
-        .skip(1)
-        .find(|a| !a.to_string_lossy().starts_with('-'))
-        .is_some_and(|a| a.as_os_str() == OsStr::new(LOADER_ENTRIES_SUBCOMMAND))
 }
 
 /// Internal (non-generic/monomorphized) primary CLI entrypoint
@@ -2161,34 +2006,53 @@ async fn run_from_opt(opt: Opt) -> Result<CliExitStatus> {
                 Ok(())
             }
             ContainerOpts::SplitKernelAndRootfs { rootfs, output } => {
-                let root = Dir::open_ambient_dir(&rootfs, ambient_authority())
-                    .with_context(|| format!("Opening {rootfs}"))?;
-                std::fs::create_dir_all(&output).with_context(|| format!("Creating {output}"))?;
-                let output = Dir::open_ambient_dir(&output, ambient_authority())
-                    .with_context(|| format!("Opening {output}"))?;
-                crate::kernel::split_kernel(&root, &output)?;
+                use crate::kernel::{KernelType, find_kernel};
+
+                let root = Dir::open_ambient_dir(&rootfs, ambient_authority())?;
+
+                let kernel_internal = find_kernel(&root)?
+                    .ok_or_else(|| anyhow::anyhow!("No kernel found in rootfs"))?;
+
+                if kernel_internal.kernel.unified {
+                    anyhow::bail!("UKIs are not supported");
+                }
+
+                match &kernel_internal.k_type {
+                    KernelType::Vmlinuz { path, initramfs } => {
+                        let kver = &kernel_internal.kernel.version;
+                        let kernel_output_dir = output.join(kver);
+                        std::fs::create_dir_all(&kernel_output_dir)?;
+
+                        let vmlinuz_src = rootfs.join(path);
+                        let initramfs_src = rootfs.join(initramfs);
+                        let vmlinuz_dst = kernel_output_dir.join("vmlinuz");
+                        let initramfs_dst = kernel_output_dir.join("initramfs.img");
+
+                        std::fs::rename(&vmlinuz_src, &vmlinuz_dst).context("Moving vmlinuz")?;
+                        std::fs::rename(&initramfs_src, &initramfs_dst)
+                            .context("Moving initramfs")?;
+                    }
+
+                    KernelType::Uki { .. } => {
+                        anyhow::bail!("UKIs are not supported");
+                    }
+                }
+
                 Ok(())
             }
             ContainerOpts::ComputeComposefsDigest {
                 path,
                 write_dumpfile_to,
-                erofs_version,
             } => {
-                let digest = compute_composefs_digest(
-                    &path,
-                    erofs_version.into(),
-                    write_dumpfile_to.as_deref(),
-                )
-                .await?;
+                let digest = compute_composefs_digest(&path, write_dumpfile_to.as_deref()).await?;
                 println!("{digest}");
                 Ok(())
             }
             ContainerOpts::ComputeComposefsDigestFromStorage {
                 write_dumpfile_to,
-                erofs_version,
                 image,
             } => {
-                let (_td_guard, repo) = new_temp_composefs_repo(erofs_version.into())?;
+                let (_td_guard, repo) = new_temp_composefs_repo()?;
 
                 let mut proxycfg = crate::deploy::new_proxy_config();
 
@@ -2228,7 +2092,7 @@ async fn run_from_opt(opt: Opt) -> Result<CliExitStatus> {
                     &repo,
                     &pull_result.config_digest,
                     Some(&pull_result.config_verity),
-                    &composefs_oci::OciTransformOptions::default(),
+                    &Default::default(),
                 )
                 .context("Populating fs")?;
                 fs.transform_for_boot(&repo).context("Preparing for boot")?;
@@ -2248,7 +2112,6 @@ async fn run_from_opt(opt: Opt) -> Result<CliExitStatus> {
                 rootfs,
                 kargs,
                 allow_missing_verity,
-                erofs_version,
                 write_dumpfile_to,
                 kernel_dir,
                 args,
@@ -2281,7 +2144,6 @@ async fn run_from_opt(opt: Opt) -> Result<CliExitStatus> {
                     &args,
                     kernel,
                     allow_missing_verity,
-                    erofs_version,
                     write_dumpfile_to.as_deref(),
                 )
                 .await
@@ -2376,7 +2238,6 @@ async fn run_from_opt(opt: Opt) -> Result<CliExitStatus> {
             }
         },
         Opt::Install(opts) => match opts {
-            InstallOpts::Mount(opts) => crate::mount::mount(opts).await,
             #[cfg(feature = "install-to-disk")]
             InstallOpts::ToDisk(opts) => crate::install::install_to_disk(opts).await,
             InstallOpts::ToFilesystem(opts) => {
@@ -2466,7 +2327,6 @@ async fn run_from_opt(opt: Opt) -> Result<CliExitStatus> {
                     Ok(())
                 }
             },
-            #[cfg(feature = "selinux")]
             InternalsOpts::Selinux(SelinuxOpts::IsUnlabeled { path }) => {
                 ensure!(crate::lsm::selinux_enabled(), "SELinux is not enabled");
                 let path = path
@@ -2722,23 +2582,14 @@ async fn run_from_opt(opt: Opt) -> Result<CliExitStatus> {
             }
         },
 
-        Opt::ComposefsFinalizeStaged(opts) => {
-            if opts.hold {
-                // Must happen before loading storage: the hold has to stay in
-                // the root mount namespace, and must not depend on anything
-                // but /boot.
-                crate::bootc_composefs::finalize::hold_boot()
-            } else {
-                let storage = &get_storage().await?;
-                match storage.kind()? {
-                    BootedStorageKind::Ostree(_) => {
-                        anyhow::bail!(
-                            "ComposefsFinalizeStaged is only supported for composefs backend"
-                        )
-                    }
-                    BootedStorageKind::Composefs(booted_cfs) => {
-                        composefs_backend_finalize(storage, &booted_cfs).await
-                    }
+        Opt::ComposefsFinalizeStaged => {
+            let storage = &get_storage().await?;
+            match storage.kind()? {
+                BootedStorageKind::Ostree(_) => {
+                    anyhow::bail!("ComposefsFinalizeStaged is only supported for composefs backend")
+                }
+                BootedStorageKind::Composefs(booted_cfs) => {
+                    composefs_backend_finalize(storage, &booted_cfs).await
                 }
             }
         }
@@ -2836,27 +2687,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_ukify_erofs_version_args() {
-        for (command, expected) in [
-            (&["bootc", "container", "ukify"][..], None),
-            (
-                &["bootc", "container", "ukify", "--erofs-version=v1"][..],
-                Some(ErofsVersionArg::V1),
-            ),
-            (
-                &["bootc", "container", "ukify", "--erofs-version=v2"][..],
-                Some(ErofsVersionArg::V2),
-            ),
-        ] {
-            let opt = Opt::try_parse_from(command).unwrap();
-            let Opt::Container(ContainerOpts::Ukify { erofs_version, .. }) = opt else {
-                panic!("expected container ukify options");
-            };
-            assert_eq!(erofs_version, expected);
-        }
-    }
-
-    #[test]
     fn test_parse_opts() {
         assert!(matches!(
             Opt::parse_including_static(["bootc", "status"]),
@@ -2887,21 +2717,9 @@ mod tests {
             Opt::parse_including_static(["bootc", "status", "-v"]),
             Opt::Status(StatusOpts { verbose: true, .. })
         ));
-
-        for (args, hold) in [
-            (&["bootc", "composefs-finalize-staged"][..], false),
-            (&["bootc", "composefs-finalize-staged", "--hold"][..], true),
-        ] {
-            assert_eq!(
-                Opt::parse_including_static(args),
-                Opt::ComposefsFinalizeStaged(ComposefsFinalizeStagedOpts { hold }),
-                "{args:?}"
-            );
-        }
     }
 
     #[test]
-    #[cfg(feature = "selinux")]
     fn test_parse_selinux_is_unlabeled() {
         let opt = Opt::try_parse_from([
             "bootc",
@@ -2923,7 +2741,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "selinux")]
     fn test_is_unlabeled_exit_status() {
         let path = Utf8Path::new("probe");
         let cases = [
@@ -3090,76 +2907,6 @@ mod tests {
             let s = String::from_utf8(buf).expect("completion should be utf8");
             for w in &want {
                 assert!(s.contains(w), "{shell:?} completion missing {w}");
-            }
-        }
-    }
-
-    #[test]
-    fn test_host_feature_gates() {
-        // The full CLI (used for docs and completions) always advertises the command.
-        let full = Opt::command();
-        let sub = full
-            .find_subcommand(LOADER_ENTRIES_SUBCOMMAND)
-            .expect("loader-entries subcommand");
-        assert!(!sub.is_hide_set());
-
-        let invocation = [
-            "bootc",
-            LOADER_ENTRIES_SUBCOMMAND,
-            "set-options-for-source",
-            "--source",
-            "tuned",
-        ];
-
-        // (host ostree supports bootconfig-extra, expect subcommand available)
-        for (supported, expect_available) in [(true, true), (false, false)] {
-            let cmd = apply_host_feature_gates(Opt::command(), supported);
-            let visible: Vec<_> = cmd
-                .get_subcommands()
-                .filter(|c| !c.is_hide_set())
-                .map(clap::Command::get_name)
-                .collect();
-            assert_eq!(
-                visible.contains(&LOADER_ENTRIES_SUBCOMMAND),
-                expect_available,
-                "bootconfig_extra={supported}: {visible:?}"
-            );
-
-            // Any invocation of the gated subcommand, including the `--help`
-            // probe TuneD uses, is rejected before parsing on unsupported
-            // hosts (with EXIT_UNAVAILABLE); everything else is left to clap.
-            let argv = |a: &[&str]| a.iter().map(OsString::from).collect::<Vec<_>>();
-            for gated in [
-                argv(&["bootc", LOADER_ENTRIES_SUBCOMMAND, "--help"]),
-                argv(&[
-                    "bootc",
-                    LOADER_ENTRIES_SUBCOMMAND,
-                    "set-options-for-source",
-                    "--help",
-                ]),
-                argv(&invocation),
-            ] {
-                assert_eq!(
-                    host_feature_gate_rejects(&gated, supported),
-                    !expect_available,
-                    "bootconfig_extra={supported}: {gated:?}"
-                );
-            }
-            for other in [
-                argv(&["bootc", "status"]),
-                argv(&["bootc", "--version"]),
-                argv(&["bootc"]),
-            ] {
-                assert!(!host_feature_gate_rejects(&other, supported), "{other:?}");
-            }
-
-            // With the gate open the invocation parses normally.
-            if expect_available {
-                let opt = <Opt as clap::FromArgMatches>::from_arg_matches(
-                    &cmd.clone().try_get_matches_from(invocation).unwrap(),
-                )
-                .unwrap();
-                assert!(matches!(opt, Opt::LoaderEntries(_)));
             }
         }
     }

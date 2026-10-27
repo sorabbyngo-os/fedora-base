@@ -39,7 +39,7 @@
 //!
 //! ## Storage Backends
 //!
-//! - [`bootc_composefs`] - Composefs backend implementation
+//! - [`bootc_composefs`] - Composefs backend implementation (experimental)
 //! - The OSTree backend is implemented via `ostree-ext` and the [`store`] module
 //!
 //! ## Filesystem and Boot
@@ -85,7 +85,6 @@ mod lints;
 mod loader_entries;
 mod lsm;
 pub(crate) mod metadata;
-mod mount;
 mod parsers;
 mod podman;
 pub(crate) mod podman_client;

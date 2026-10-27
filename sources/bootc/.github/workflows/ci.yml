@@ -120,8 +120,8 @@ jobs:
               || [[ "$EVENT" == "pull_request" && "$MERGE_QUEUE_ENABLED" != "true" ]] \
               || echo "$LABELS" | jq -e 'index("ci/merge")' > /dev/null; }; then
             # Full suite: all OSes
-            echo 'package_os_matrix=["fedora-44","fedora-45","fedora-46","centos-9","centos-10"]' >> "$GITHUB_OUTPUT"
-            echo 'integration_os_matrix=["fedora-44","centos-9","centos-10"]' >> "$GITHUB_OUTPUT"
+            echo 'package_os_matrix=["fedora-43","fedora-44","fedora-45","fedora-46","centos-9","centos-10"]' >> "$GITHUB_OUTPUT"
+            echo 'integration_os_matrix=["fedora-43","fedora-44","centos-9","centos-10"]' >> "$GITHUB_OUTPUT"
             echo 'upgrade_os_matrix=["fedora-44","centos-10"]' >> "$GITHUB_OUTPUT"
             echo 'run_heavy=true' >> "$GITHUB_OUTPUT"
           elif [[ "$DOCS_ONLY" != "true" ]] && echo "$LABELS" | jq -e 'index("ci/tier-1")' > /dev/null; then
@@ -265,10 +265,8 @@ jobs:
 
       - name: Setup env
         run: |
-          BASE="$(just pullspec-for-os base "${{ matrix.test_os }}")"
-          BUILDROOT_BASE="$(just pullspec-for-os buildroot-base "${{ matrix.test_os }}")"
-          printf 'BOOTC_base=%s\n' "$BASE" >> "$GITHUB_ENV"
-          printf 'BOOTC_buildroot_base=%s\n' "$BUILDROOT_BASE" >> "$GITHUB_ENV"
+          BASE=$(just pullspec-for-os base ${{ matrix.test_os }})
+          echo "BOOTC_base=${BASE}" >> $GITHUB_ENV
 
       - name: Build packages (and verify build system)
         run: just check-buildsys
@@ -278,9 +276,7 @@ jobs:
         with:
           name: packages-${{ matrix.test_os }}
           path: target/packages/*.rpm
-          # Test jobs download these from this run; keep them long enough
-          # that re-running a flaked job on an older PR still works.
-          retention-days: 7
+          retention-days: 1
 
       # Unit tests don't depend on the variant/filesystem/bootloader/boot_type/seal_state
       # axes used by the test-integration matrix below, so we run them once per OS here
@@ -306,14 +302,9 @@ jobs:
         seal_state: ["sealed", "unsealed"]
 
         exclude:
-          # centos-9 composefs: only sealed UKI is supported (V1 EROFS).
-          # BLS and unsealed modes require newer dracut/systemd features.
+          # https://github.com/bootc-dev/bootc/issues/1812
           - test_os: centos-9
             variant: composefs
-            boot_type: bls
-          - test_os: centos-9
-            variant: composefs
-            seal_state: unsealed
           - seal_state: "sealed"
             boot_type: bls
           - seal_state: "sealed"
@@ -337,6 +328,8 @@ jobs:
 
           # For now only have grub-cc tests in F44
           - test_os: fedora-45
+            bootloader: grub-cc
+          - test_os: fedora-43
             bootloader: grub-cc
           - test_os: centos-9
             bootloader: grub-cc
@@ -362,10 +355,8 @@ jobs:
 
       - name: Setup env
         run: |
-          BASE="$(just pullspec-for-os base "${{ matrix.test_os }}")"
-          BUILDROOT_BASE="$(just pullspec-for-os buildroot-base "${{ matrix.test_os }}")"
-          printf 'BOOTC_base=%s\n' "$BASE" >> "$GITHUB_ENV"
-          printf 'BOOTC_buildroot_base=%s\n' "$BUILDROOT_BASE" >> "$GITHUB_ENV"
+          BASE=$(just pullspec-for-os base ${{ matrix.test_os }})
+          echo "BOOTC_base=${BASE}" >> $GITHUB_ENV
           echo "RUST_BACKTRACE=full" >> $GITHUB_ENV
           echo "RUST_LOG=debug" >> $GITHUB_ENV
 
@@ -463,10 +454,8 @@ jobs:
 
       - name: Setup env
         run: |
-          BASE="$(just pullspec-for-os base "${{ matrix.test_os }}")"
-          BUILDROOT_BASE="$(just pullspec-for-os buildroot-base "${{ matrix.test_os }}")"
-          printf 'BOOTC_base=%s\n' "$BASE" >> "$GITHUB_ENV"
-          printf 'BOOTC_buildroot_base=%s\n' "$BUILDROOT_BASE" >> "$GITHUB_ENV"
+          BASE=$(just pullspec-for-os base ${{ matrix.test_os }})
+          echo "BOOTC_base=${BASE}" >> $GITHUB_ENV
           echo "BOOTC_variant=${{ matrix.variant }}" >> $GITHUB_ENV
           echo "BOOTC_SKIP_PACKAGE=1" >> $GITHUB_ENV
           echo "RUST_BACKTRACE=full" >> $GITHUB_ENV
@@ -527,10 +516,8 @@ jobs:
 
       - name: Setup env
         run: |
-          BASE="$(just pullspec-for-os base "${{ matrix.test_os }}")"
-          BUILDROOT_BASE="$(just pullspec-for-os buildroot-base "${{ matrix.test_os }}")"
-          printf 'BOOTC_base=%s\n' "$BASE" >> "$GITHUB_ENV"
-          printf 'BOOTC_buildroot_base=%s\n' "$BUILDROOT_BASE" >> "$GITHUB_ENV"
+          BASE=$(just pullspec-for-os base ${{ matrix.test_os }})
+          echo "BOOTC_base=${BASE}" >> $GITHUB_ENV
           echo "BOOTC_variant=composefs" >> $GITHUB_ENV
           echo "BOOTC_baseconfigs=${{ matrix.baseconfigs }}" >> $GITHUB_ENV
           echo "RUST_BACKTRACE=full" >> $GITHUB_ENV
@@ -552,7 +539,7 @@ jobs:
           cargo xtask run-tmt \
             --env=BOOTC_variant=composefs \
             --env=BOOTC_baseconfigs=${{ matrix.baseconfigs }} \
-            --filesystem=ext4 \
+            --composefs-backend --bootloader=grub --filesystem=ext4 \
             --seal-state=unsealed --boot-type=bls \
             --upgrade-image=localhost/bootc-upgrade \
             localhost/bootc readonly

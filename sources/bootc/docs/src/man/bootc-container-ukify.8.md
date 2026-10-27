@@ -14,12 +14,6 @@ This command computes the necessary arguments from the container image
 (kernel, initrd, cmdline, os-release) and invokes ukify with them.
 Any additional arguments after `--` are passed through to ukify unchanged.
 
-Unless `--erofs-version=v2` is specified, the generated UKI contains the V1
-composefs argument followed by a V2 fallback. The command does not inspect the
-initramfs to choose a format. Explicit V2 emits only the legacy V2 argument.
-When using the default output, the initramfs in the image must be regenerated
-with a bootc version that supports V1 before the UKI is built.
-
 # OPTIONS
 
 <!-- BEGIN GENERATED OPTIONS -->
@@ -36,14 +30,6 @@ with a bootc version that supports V1 before the UKI is built.
 **--allow-missing-verity**
 
     Make fs-verity validation optional in case the filesystem doesn't support it
-
-**--erofs-version**=*EROFS_VERSION*
-
-    EROFS format version to use when computing the composefs digest
-
-    Possible values:
-    - v1
-    - v2
 
 **--write-dumpfile-to**=*WRITE_DUMPFILE_TO*
 

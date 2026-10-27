@@ -5,7 +5,6 @@ use crate::bootc_composefs::gc::{GCOpts, composefs_gc};
 use crate::bootc_composefs::rollback::{rename_exchange_bls_entries, rename_exchange_user_cfg};
 use crate::bootc_composefs::status::get_composefs_status;
 use crate::composefs_consts::STATE_DIR_ABS;
-use crate::install::BOOT;
 use crate::spec::BootloaderKind;
 use crate::store::{BootedComposefs, Storage};
 use anyhow::{Context, Result};
@@ -16,7 +15,7 @@ use cap_std_ext::dirext::CapStdExtDirExt;
 use composefs::generic_tree::{FileSystem, Stat};
 use composefs_ctl::composefs;
 use etc_merge::{Diff, compute_diff, merge, traverse_etc};
-use rustix::fs::{Mode, OFlags, fsync};
+use rustix::fs::fsync;
 
 use fn_error_context::context;
 
@@ -153,7 +152,7 @@ pub(crate) async fn composefs_backend_finalize(
         }
     };
 
-    // Now that we have successfully updated bootloader entries, we can GC the unreferenced ones
+    // Now that we have successfully updated bootloader entires, we can GC the unreferenced ones
     // We do not prune the composefs repository here though
     composefs_gc(
         storage,
@@ -166,33 +165,6 @@ pub(crate) async fn composefs_backend_finalize(
     .await?;
 
     Ok(())
-}
-
-/// Keep /boot open until we're killed, which systemd does with SIGTERM
-/// when `bootc-finalize-staged-hold.service` is stopped after
-/// `bootc-finalize-staged.service`.
-///
-/// When /boot is an automount (e.g. the ESP set up by
-/// systemd-gpt-auto-generator), an idle expire breaks finalization in two
-/// ways. If it races with shutdown, it deadlocks: the finalization (which
-/// looks up /boot) blocks on the expire, while the unmount is ordered after
-/// the finalization. If it completes before shutdown, systemd won't remount
-/// /boot once shutdown has begun, so finalization fails to open it (EHOSTDOWN)
-/// and the old deployment boots. An open file descriptor makes autofs treat
-/// the mount as busy, so it never expires. Note this only works from the
-/// root mount namespace.
-pub(crate) fn hold_boot() -> Result<()> {
-    let path = format!("/{BOOT}");
-    let _fd = rustix::fs::open(
-        path.as_str(),
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .with_context(|| format!("Opening {path}"))?;
-    tracing::debug!("Holding {path} open until terminated");
-    loop {
-        std::thread::park();
-    }
 }
 
 #[context("Grub: Finalizing staged UKI")]

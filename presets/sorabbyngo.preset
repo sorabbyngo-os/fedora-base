@@ -1,3 +1,2 @@
-# enable aion.service
-# enable sentinel.service
-# enable vanta related units when they exist
+enable aion.service
+enable sentinel.service

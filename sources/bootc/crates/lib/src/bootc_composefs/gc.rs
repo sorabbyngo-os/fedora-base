@@ -37,11 +37,7 @@ fn list_state_dirs(sysroot: &Dir) -> Result<Vec<String>> {
     let state = sysroot
         .open_dir(STATE_DIR_RELATIVE)
         .context("Opening state dir")?;
-    list_deployment_state_dirs(&state)
-}
 
-/// List the per-deployment directories in an opened composefs state directory.
-pub(crate) fn list_deployment_state_dirs(state: &Dir) -> Result<Vec<String>> {
     let mut dirs = vec![];
 
     for dir in state.entries_utf8()? {
@@ -58,17 +54,6 @@ pub(crate) fn list_deployment_state_dirs(state: &Dir) -> Result<Vec<String>> {
 }
 
 type BootBinary = (BootType, String);
-
-fn image_refs_match(
-    image_ref_v1: Option<&composefs::fsverity::Sha512HashValue>,
-    image_ref_v2: Option<&composefs::fsverity::Sha512HashValue>,
-    verity: &str,
-) -> bool {
-    [image_ref_v1, image_ref_v2]
-        .into_iter()
-        .flatten()
-        .any(|image_ref| image_ref.to_hex() == verity)
-}
 
 /// Collect all BLS Type1 boot binaries and UKI binaries by scanning filesystem
 ///
@@ -422,16 +407,16 @@ pub(crate) async fn composefs_gc(
                         ref_digest,
                         None,
                     ) {
-                        // Check both V1 and V2 slots: the deployment verity
-                        // may have been produced under either format.
-                        if image_refs_match(img.image_ref_v1(), img.image_ref_v2(), verity) {
-                            tracing::info!(
-                                "Deployment {verity} has no manifest_digest in origin; \
-                                 found matching manifest {ref_digest} via image_ref"
-                            );
-                            live_manifest_digests.push(ref_digest.clone());
-                            found_manifest = true;
-                            break;
+                        if let Some(img_ref) = img.image_ref(booted_cfs.repo.erofs_version()) {
+                            if img_ref.to_hex() == *verity {
+                                tracing::info!(
+                                    "Deployment {verity} has no manifest_digest in origin; \
+                                     found matching manifest {ref_digest} via image_ref"
+                                );
+                                live_manifest_digests.push(ref_digest.clone());
+                                found_manifest = true;
+                                break;
+                            }
                         }
                     }
                 }
@@ -517,15 +502,8 @@ pub(crate) async fn composefs_gc(
             continue;
         };
 
-        let linked_images = match linked_erofs_images(&booted_cfs.repo, &verity_to_sha) {
-            Ok(images) => images,
-            Err(err) => {
-                tracing::warn!(
-                    "Unable to inspect linked EROFS images for orphan '{verity}', skipping boot-object cleanup: {err:#}"
-                );
-                continue;
-            }
-        };
+        let linked_images = linked_erofs_images(&booted_cfs.repo, &verity_to_sha)
+            .with_context(|| anyhow::anyhow!("Getting linked images for {verity}"))?;
 
         // Get any image that is non-bootable
         let Some(non_bootable_img) = linked_images.iter().find(|img| !img.bootable) else {
@@ -536,7 +514,7 @@ pub(crate) async fn composefs_gc(
         let boot_dump = composefs_ctl::dump_files(
             &booted_cfs.repo,
             &non_bootable_img.id.to_hex(),
-            &vec![std::path::Path::new("/").join(crate::install::BOOT)],
+            &vec![std::path::PathBuf::from("/boot")],
             false,
         )
         .context("Getting dump for /boot")?;
@@ -613,14 +591,6 @@ mod tests {
     use super::*;
     use crate::bootc_composefs::status::list_type1_entries;
     use crate::testutils::{ChangeType, TestRoot};
-
-    #[test]
-    fn test_image_refs_match_v2_when_v1_is_present() {
-        let v1 = composefs::fsverity::Sha512HashValue::from_hex(&"11".repeat(64)).unwrap();
-        let v2 = composefs::fsverity::Sha512HashValue::from_hex(&"22".repeat(64)).unwrap();
-
-        assert!(image_refs_match(Some(&v1), Some(&v2), &v2.to_hex()));
-    }
 
     /// Reproduce the shared-entry GC bug from issue #2102.
     ///

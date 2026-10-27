@@ -21,7 +21,6 @@ const COMMON_INST_ARGS: &[&str] = &["--label=bootc.test=1"];
 const FIELD_TRY_BIND_STORAGE: &str = "try_bind_storage";
 const FIELD_SUMMARY: &str = "summary";
 const FIELD_ADJUST: &str = "adjust";
-const FIELD_ENABLED: &str = "enabled";
 
 const FIELD_FIXME_SKIP_IF_COMPOSEFS: &str = "fixme_skip_if_composefs";
 const FIELD_FIXME_SKIP_IF_UKI: &str = "fixme_skip_if_uki";
@@ -30,14 +29,9 @@ const FIELD_FIXME_SKIP_IF_UKI: &str = "fixme_skip_if_uki";
 /// Ex. composefs-gc
 const FIELD_SKIP_IF_OSTREE: &str = "skip_if_ostree";
 
-// Rust tests are subcommands of the tests-integration binary, one per module
-const RUST_TESTS_DIR: &str = "crates/tests-integration/src/booted";
-const RUST_TESTS_COMMAND: &str = "bootc-integration-tests booted";
-
 // bcvk options
 const BCVK_OPT_BIND_STORAGE_RO: &str = "--bind-storage-ro";
 const ENV_BOOTC_UPGRADE_IMAGE: &str = "BOOTC_upgrade_image";
-const ENV_BOOTC_BRIDGE_IMAGE: &str = "BOOTC_bridge_image";
 
 // Distro identifiers
 const DISTRO_CENTOS_9: &str = "centos-9";
@@ -404,7 +398,6 @@ pub(crate) fn run_tmt(sh: &Shell, args: &RunTmtArgs) -> Result<()> {
 
     let bcvk_opts = BcvkInstallOpts {
         composefs_backend: args.composefs_backend,
-        composefs: args.composefs,
         bootloader: args.bootloader.clone(),
         filesystem: args.filesystem.clone(),
         seal_state: args.seal_state.clone(),
@@ -464,7 +457,7 @@ pub(crate) fn run_tmt(sh: &Shell, args: &RunTmtArgs) -> Result<()> {
         plans.retain(|plan| filter_args.iter().any(|arg| plan.contains(arg.as_str())));
     }
 
-    if args.composefs {
+    if args.composefs_backend {
         plans.retain(|plan| {
             !plan_metadata
                 .iter()
@@ -564,11 +557,8 @@ pub(crate) fn run_tmt(sh: &Shell, args: &RunTmtArgs) -> Result<()> {
 
             let mut opts = Vec::new();
 
-            // If test wants bind storage, the distro supports it, and it wasn't
-            // explicitly disabled, add --bind-storage-ro
-            let use_bind_storage =
-                try_bind_storage && supports_bind_storage_ro && !args.skip_bind_storage;
-            if use_bind_storage {
+            // If test wants bind storage and distro supports it, add --bind-storage-ro
+            if try_bind_storage && supports_bind_storage_ro {
                 opts.push(BCVK_OPT_BIND_STORAGE_RO.to_string());
 
                 // If upgrade image is provided, set it as an environment variable for tmt
@@ -576,13 +566,6 @@ pub(crate) fn run_tmt(sh: &Shell, args: &RunTmtArgs) -> Result<()> {
                 if let Some(ref upgrade_img) = args.upgrade_image {
                     tmt_env_vars.push(format!("{}={}", ENV_BOOTC_UPGRADE_IMAGE, upgrade_img));
                 }
-                if let Some(ref bridge_img) = args.bridge_image {
-                    tmt_env_vars.push(format!("{}={}", ENV_BOOTC_BRIDGE_IMAGE, bridge_img));
-                }
-            } else if try_bind_storage && args.skip_bind_storage {
-                println!(
-                    "Note: Test requests bind storage but --skip-bind-storage was set; running without host container-storage mount"
-                );
             } else if try_bind_storage && !supports_bind_storage_ro {
                 println!(
                     "Note: Test wants bind storage but skipping on {} (missing systemd.extra-unit.* support)",
@@ -951,17 +934,14 @@ pub(crate) fn tmt_provision(sh: &Shell, args: &TmtProvisionArgs) -> Result<()> {
     Ok(())
 }
 
-/// Parse tmt metadata from a test file whose line comments start with `comment`
+/// Parse tmt metadata from a test file
 /// Looks for:
 /// # number: N
 /// # extra:
 /// #   try_bind_storage: true
 /// # tmt:
 /// #   (yaml content)
-fn parse_tmt_metadata(content: &str, comment: &str) -> Result<Option<TmtMetadata>> {
-    let number_prefix = format!("{comment} number:");
-    let extra_marker = format!("{comment} extra:");
-    let tmt_marker = format!("{comment} tmt:");
+fn parse_tmt_metadata(content: &str) -> Result<Option<TmtMetadata>> {
     let mut number = None;
     let mut in_extra_block = false;
     let mut in_tmt_block = false;
@@ -972,7 +952,7 @@ fn parse_tmt_metadata(content: &str, comment: &str) -> Result<Option<TmtMetadata
         let trimmed = line.trim();
 
         // Look for "# number: N" line
-        if let Some(rest) = trimmed.strip_prefix(&number_prefix) {
+        if let Some(rest) = trimmed.strip_prefix("# number:") {
             number = Some(
                 rest.trim()
                     .parse::<u32>()
@@ -981,23 +961,23 @@ fn parse_tmt_metadata(content: &str, comment: &str) -> Result<Option<TmtMetadata
             continue;
         }
 
-        if trimmed == extra_marker {
+        if trimmed == "# extra:" {
             in_extra_block = true;
             in_tmt_block = false;
             continue;
-        } else if trimmed == tmt_marker {
+        } else if trimmed == "# tmt:" {
             in_tmt_block = true;
             in_extra_block = false;
             continue;
         } else if in_extra_block || in_tmt_block {
-            // Stop if we hit a line that isn't a comment, or is an empty one
-            if !trimmed.starts_with(comment) || trimmed == comment {
+            // Stop if we hit a line that doesn't start with #, or is just "#"
+            if !trimmed.starts_with('#') || trimmed == "#" {
                 in_extra_block = false;
                 in_tmt_block = false;
                 continue;
             }
-            // Remove the leading comment marker and preserve indentation
-            if let Some(yaml_line) = line.strip_prefix(comment) {
+            // Remove the leading # and preserve indentation
+            if let Some(yaml_line) = line.strip_prefix('#') {
                 if in_extra_block {
                     extra_yaml_lines.push(yaml_line);
                 } else {
@@ -1140,47 +1120,31 @@ fn generate_integration() -> Result<(String, String)> {
     // Define tests in order
     let mut tests = vec![];
 
-    // Scan for test-*.nu, test-*.sh, and test-*.py files in tmt/tests/booted/,
-    // and for the Rust tests
+    // Scan for test-*.nu, test-*.sh, and test-*.py files in tmt/tests/booted/
     let booted_dir = Utf8Path::new("tmt/tests/booted");
-    let rust_dir = Utf8Path::new(RUST_TESTS_DIR);
-    let entries = std::fs::read_dir(booted_dir)
-        .with_context(|| format!("Reading directory {}", booted_dir))?
-        .chain(
-            std::fs::read_dir(rust_dir)
-                .with_context(|| format!("Reading directory {}", rust_dir))?,
-        );
 
-    for entry in entries {
+    for entry in std::fs::read_dir(booted_dir)
+        .with_context(|| format!("Reading directory {}", booted_dir))?
+    {
         let entry = entry?;
         let path = entry.path();
         let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
 
-        // Extract stem (filename without "test-" prefix and extension), or
-        // for a Rust test its module name, which is its subcommand with _ for -
-        let is_rust = path.starts_with(rust_dir);
-        let (stem, comment) = if is_rust {
-            let Some(module) = filename.strip_suffix(".rs") else {
-                continue;
-            };
-            (module.replace('_', "-"), "//")
-        } else {
-            let Some(stem) = filename.strip_prefix("test-").and_then(|s| {
-                s.strip_suffix(".nu")
-                    .or_else(|| s.strip_suffix(".sh"))
-                    .or_else(|| s.strip_suffix(".py"))
-            }) else {
-                continue;
-            };
-            (stem.to_owned(), "#")
+        // Extract stem (filename without "test-" prefix and extension)
+        let Some(stem) = filename.strip_prefix("test-").and_then(|s| {
+            s.strip_suffix(".nu")
+                .or_else(|| s.strip_suffix(".sh"))
+                .or_else(|| s.strip_suffix(".py"))
+        }) else {
+            continue;
         };
 
         let content =
             std::fs::read_to_string(&path).with_context(|| format!("Reading {}", filename))?;
 
-        let metadata = parse_tmt_metadata(&content, comment)
+        let metadata = parse_tmt_metadata(&content)
             .with_context(|| format!("Parsing tmt metadata from {}", filename))?
             .with_context(|| format!("Missing tmt metadata in {}", filename))?;
 
@@ -1196,23 +1160,20 @@ fn generate_integration() -> Result<(String, String)> {
             })
             .unwrap_or_else(|| stem.to_string());
 
+        // Derive relative path from booted_dir
+        let relative_path = path
+            .strip_prefix("tmt/tests/")
+            .with_context(|| format!("Failed to get relative path for {}", filename))?;
+
         // Determine test command based on file extension
-        let test_command = if is_rust {
-            format!("{RUST_TESTS_COMMAND} {stem}")
+        let test_command = if filename.ends_with(".nu") {
+            format!("nu {}", relative_path.display())
+        } else if filename.ends_with(".sh") {
+            format!("bash {}", relative_path.display())
+        } else if filename.ends_with(".py") {
+            format!("python3 {}", relative_path.display())
         } else {
-            // Derive relative path from booted_dir
-            let relative_path = path
-                .strip_prefix("tmt/tests/")
-                .with_context(|| format!("Failed to get relative path for {}", filename))?;
-            if filename.ends_with(".nu") {
-                format!("nu {}", relative_path.display())
-            } else if filename.ends_with(".sh") {
-                format!("bash {}", relative_path.display())
-            } else if filename.ends_with(".py") {
-                format!("python3 {}", relative_path.display())
-            } else {
-                anyhow::bail!("Unsupported test file extension: {}", filename);
-            }
+            anyhow::bail!("Unsupported test file extension: {}", filename);
         };
 
         // Check if test wants bind storage
@@ -1341,12 +1302,6 @@ fn generate_integration() -> Result<(String, String)> {
                 plan_value.insert(
                     serde_yaml::Value::String(FIELD_SUMMARY.to_string()),
                     summary.clone(),
-                );
-            }
-            if let Some(enabled) = map.get(&serde_yaml::Value::String(FIELD_ENABLED.to_string())) {
-                plan_value.insert(
-                    serde_yaml::Value::String(FIELD_ENABLED.to_string()),
-                    enabled.clone(),
                 );
             }
         }
@@ -1485,7 +1440,7 @@ mod tests {
 use tap.nu
 "#;
 
-        let metadata = parse_tmt_metadata(content, "#").unwrap().unwrap();
+        let metadata = parse_tmt_metadata(content).unwrap().unwrap();
         assert_eq!(metadata.number, 1);
 
         // Verify tmt fields are captured
@@ -1516,7 +1471,7 @@ use tap.nu
 use std assert
 "#;
 
-        let metadata = parse_tmt_metadata(content, "#").unwrap().unwrap();
+        let metadata = parse_tmt_metadata(content).unwrap().unwrap();
         assert_eq!(metadata.number, 27);
 
         // Verify adjust section is in tmt
@@ -1530,7 +1485,7 @@ use std assert
 use std assert
 "#;
 
-        let result = parse_tmt_metadata(content, "#").unwrap();
+        let result = parse_tmt_metadata(content).unwrap();
         assert!(result.is_none());
     }
 
@@ -1548,7 +1503,7 @@ use std assert
 set -eux
 "#;
 
-        let metadata = parse_tmt_metadata(content, "#").unwrap().unwrap();
+        let metadata = parse_tmt_metadata(content).unwrap().unwrap();
         assert_eq!(metadata.number, 26);
 
         let tmt = metadata.tmt.as_mapping().unwrap();
@@ -1571,7 +1526,7 @@ set -eux
 use std assert
 "#;
 
-        let metadata = parse_tmt_metadata(content, "#").unwrap().unwrap();
+        let metadata = parse_tmt_metadata(content).unwrap().unwrap();
         assert_eq!(metadata.number, 24);
 
         let extra = metadata.extra.as_mapping().unwrap();
@@ -1587,31 +1542,5 @@ use std assert
                 "Execute local upgrade tests".to_string()
             ))
         );
-    }
-
-    #[test]
-    fn test_parse_tmt_metadata_rust() {
-        let content = r#"// number: 50
-// tmt:
-//   summary: Switch to an image with zstd:chunked compressed layers
-// extra:
-//   skip_if_ostree: true
-//
-//! Module documentation
-use anyhow::Result;
-"#;
-
-        let metadata = parse_tmt_metadata(content, "//").unwrap().unwrap();
-        assert_eq!(metadata.number, 50);
-
-        let extra = metadata.extra.as_mapping().unwrap();
-        assert_eq!(
-            extra.get(&serde_yaml::Value::String("skip_if_ostree".to_string())),
-            Some(&serde_yaml::Value::Bool(true))
-        );
-        let tmt = metadata.tmt.as_mapping().unwrap();
-        assert_eq!(tmt.len(), 1);
-
-        assert!(parse_tmt_metadata(content, "#").unwrap().is_none());
     }
 }

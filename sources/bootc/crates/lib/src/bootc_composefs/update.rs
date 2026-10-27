@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use cap_std_ext::{cap_std::fs::Dir, dirext::CapStdExtDirExt};
-use composefs::erofs::format::FormatVersion;
 use composefs::fsverity::{FsVerityHashValue, Sha512HashValue};
 use composefs_boot::BootOps;
 use composefs_ctl::composefs;
@@ -19,8 +18,8 @@ use crate::spec::BootloaderKind;
 use crate::{
     bootc_composefs::{
         boot::{
-            BootSetupType, BootType, print_uki_dumpfile_diff_on_mismatch, setup_composefs_bls_boot,
-            setup_composefs_uki_boot,
+            BootSetupType, BootType, UKIDigestMismatch, print_uki_dumpfile_diff,
+            setup_composefs_bls_boot, setup_composefs_uki_boot,
         },
         gc::composefs_gc,
         repo::pull_composefs_repo,
@@ -146,26 +145,16 @@ pub(crate) fn validate_update(
     let oci_digest: composefs_oci::OciDigest = img_digest
         .parse()
         .with_context(|| format!("Parsing config digest {img_digest}"))?;
-    let mut fs = create_filesystem(
-        repo,
-        &oci_digest,
-        Some(config_verity),
-        &composefs_oci::OciTransformOptions::default(),
-    )?;
+    let mut fs = create_filesystem(repo, &oci_digest, Some(config_verity), &Default::default())?;
     fs.transform_for_boot(&repo)?;
 
-    let image_ids = [
-        fs.compute_image_id(FormatVersion::V1),
-        fs.compute_image_id(FormatVersion::V2),
-    ];
+    let image_id = fs.compute_image_id(repo.erofs_version());
 
     let all_deployments = host.all_composefs_deployments()?;
 
-    let found_depl = all_deployments.iter().find(|d| {
-        image_ids
-            .iter()
-            .any(|id| d.deployment.verity == id.to_hex())
-    });
+    let found_depl = all_deployments
+        .iter()
+        .find(|d| d.deployment.verity == image_id.to_hex());
 
     if let Some(collision) = found_depl {
         if is_switch {
@@ -205,19 +194,16 @@ pub(crate) fn validate_update(
         BootloaderKind::BLSCompatible => rm_staged_type1_ent(boot_dir)?,
     }
 
-    // Remove state directories for either serialisation of the same rootfs.
+    // Remove state directory
     let state_dir = storage
         .physical_root
         .open_dir(STATE_DIR_RELATIVE)
         .context("Opening state dir")?;
 
-    for image_id in image_ids {
-        let image_id = image_id.to_hex();
-        if state_dir.exists(&image_id) {
-            state_dir
-                .remove_dir_all(&image_id)
-                .context("Removing state")?;
-        }
+    if state_dir.exists(image_id.to_hex()) {
+        state_dir
+            .remove_dir_all(image_id.to_hex())
+            .context("Removing state")?;
     }
 
     Ok(UpdateAction::Proceed)
@@ -279,7 +265,6 @@ pub(crate) async fn do_upgrade(
         repo,
         entries,
         id,
-        boot_ids,
         manifest_digest,
         fs: oci_fs,
     } = pull_composefs_repo(
@@ -330,32 +315,34 @@ pub(crate) async fn do_upgrade(
 
     let boot_type = BootType::from(entry);
 
-    let (provisional_deploy_id, provisional_format) = (id.clone(), repo.erofs_version());
-
-    let (boot_digest, deploy_id) = match boot_type {
-        BootType::Bls => (
-            setup_composefs_bls_boot(
-                BootSetupType::Upgrade((storage, booted_cfs, &host)),
-                &repo,
-                &provisional_deploy_id,
-                provisional_format,
-                entry,
-                &mounted_fs,
-            )?,
-            provisional_deploy_id,
-        ),
-
-        BootType::Uki => print_uki_dumpfile_diff_on_mismatch(
-            setup_composefs_uki_boot(
-                BootSetupType::Upgrade((storage, booted_cfs, &host)),
-                &repo,
-                &provisional_deploy_id,
-                &boot_ids,
-                entries,
-            ),
+    let boot_digest = match boot_type {
+        BootType::Bls => setup_composefs_bls_boot(
+            BootSetupType::Upgrade((storage, booted_cfs, &host)),
             &repo,
-            &oci_fs,
+            &id,
+            entry,
+            &mounted_fs,
         )?,
+
+        BootType::Uki => {
+            let uki_setup_result = setup_composefs_uki_boot(
+                BootSetupType::Upgrade((storage, booted_cfs, &host)),
+                &repo,
+                &id,
+                entries,
+            );
+
+            match uki_setup_result {
+                Ok(boot_digest) => boot_digest,
+                Err(e) => match e.downcast::<UKIDigestMismatch>() {
+                    Ok(mismatch) => {
+                        print_uki_dumpfile_diff(&mismatch, &repo, &oci_fs);
+                        return Err(mismatch.into());
+                    }
+                    Err(e) => Err(e)?,
+                },
+            }
+        }
     };
 
     // `repo` holds its own flock(LOCK_SH) on /sysroot/composefs, taken out by
@@ -373,13 +360,13 @@ pub(crate) async fn do_upgrade(
     drop(repo);
 
     let staged_state = StagedDeployment {
-        depl_id: deploy_id.to_hex(),
+        depl_id: id.to_hex(),
         finalization_locked: opts.download_only,
     };
 
     write_composefs_state(
         &Utf8PathBuf::from("/sysroot"),
-        &deploy_id,
+        &id,
         imgref,
         Some(staged_state),
         boot_type,
@@ -405,7 +392,7 @@ pub(crate) async fn do_upgrade(
     )
     .await?;
 
-    apply_upgrade(storage, booted_cfs, &deploy_id.to_hex(), opts).await
+    apply_upgrade(storage, booted_cfs, &id.to_hex(), opts).await
 }
 
 #[context("Applying downloaded upgrade")]
@@ -438,7 +425,7 @@ pub(crate) async fn apply_upgrade_from_downloaded(
         .context("Reading staged file")?;
 
     let mut new_staged: StagedDeployment =
-        serde_json::from_str(&current).context("Deserializing staged file")?;
+        serde_json::from_str(&current).context("Deserialzing staged file")?;
 
     // Make the staged deployment not download_only
     new_staged.finalization_locked = false;

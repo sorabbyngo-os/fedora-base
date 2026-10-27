@@ -178,8 +178,7 @@ pub(crate) enum ContainerOpts {
     },
 
     /// Perform build-time checking and canonicalization.
-    ///
-    /// Deprecated: use `bootc container lint` to check bootc container images.
+    /// This is presently an optional command, but may become required in the future.
     Commit,
 
     /// Commands for working with (possibly layered, non-encapsulated) container images.

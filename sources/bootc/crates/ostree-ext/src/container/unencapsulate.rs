@@ -155,8 +155,7 @@ pub struct Import {
 /// Or to restate all of the above - what this function does is check
 /// to see if the worker function had an error *and* if the proxy
 /// had an error, but if the proxy's error ends in `broken pipe`
-/// then it means the real only error is from the worker. Otherwise the
-/// proxy error remains in the error chain so callers can inspect typed errors.
+/// then it means the real only error is from the worker.
 pub(crate) async fn join_fetch<T: std::fmt::Debug>(
     worker: impl Future<Output = Result<T>>,
     driver: impl Future<Output = Result<()>>,
@@ -170,42 +169,11 @@ pub(crate) async fn join_fetch<T: std::fmt::Debug>(
                 tracing::trace!("Ignoring broken pipe failure from driver");
                 Err(worker)
             } else {
-                Err(driver.context(format!("client error: {worker:#}")))
+                Err(worker.context(format!("proxy failure: {text} and client error")))
             }
         }
         (Ok(_), Err(driver)) => Err(driver),
         (Err(worker), Ok(())) => Err(worker),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_join_fetch_preserves_typed_driver_error() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        let error = runtime
-            .block_on(join_fetch(
-                async { Err::<(), _>(anyhow!("client read failed")) },
-                async {
-                    let error = containers_image_proxy::Error::BlobError(
-                        containers_image_proxy::GetBlobError::Retryable("connection reset".into()),
-                    );
-                    Err::<(), _>(anyhow::Error::from(error))
-                },
-            ))
-            .unwrap_err();
-
-        assert!(error.chain().any(|source| matches!(
-            source.downcast_ref::<containers_image_proxy::Error>(),
-            Some(containers_image_proxy::Error::BlobError(
-                containers_image_proxy::GetBlobError::Retryable(_)
-            ))
-        )));
-        assert!(format!("{error:#}").contains("client read failed"));
     }
 }
 
@@ -217,7 +185,7 @@ pub async fn unencapsulate(repo: &ostree::Repo, imgref: &OstreeImageReference) -
     importer.unencapsulate().await
 }
 
-/// A wrapper for [`ImageProxy::get_blob_stream`] which fetches a layer and decompresses it.
+/// A wrapper for [`ImageProxy::get_blob`] which fetches a layer and decompresses it.
 pub(crate) async fn fetch_layer<'a>(
     proxy: &'a ImageProxy,
     img: &OpenedImage,
@@ -234,7 +202,7 @@ pub(crate) async fn fetch_layer<'a>(
     use futures_util::future::Either;
     tracing::debug!("fetching {}", layer.digest());
     let layer_index = manifest.layers().iter().position(|x| x == layer).unwrap();
-    let (blob_digest, size);
+    let (blob, driver, size);
     let mut media_type: oci_image::MediaType;
     match transport_src {
         // Both containers-storage and docker-daemon store layers uncompressed in their
@@ -263,18 +231,15 @@ pub(crate) async fn fetch_layer<'a>(
                 }
             }
 
-            blob_digest = &layer_blob.digest;
+            (blob, driver) = proxy.get_blob(img, &layer_blob.digest, size).await?;
         }
         _ => {
             size = layer.size();
             media_type = layer.media_type().clone();
-            blob_digest = layer.digest();
+            (blob, driver) = proxy.get_blob(img, layer.digest(), size).await?;
         }
     };
 
-    let stream = proxy.get_blob_stream(img, blob_digest, size).await?;
-    let (blob, driver) = stream.into_parts();
-    let blob = tokio::io::BufReader::new(blob);
     let driver = async { driver.await.map_err(Into::into) };
 
     if let Some(progress) = progress {
