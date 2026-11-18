@@ -18,6 +18,10 @@ RUN sed -i "s/@FEDORA_VERSION@/${FEDORA_VERSION}/g" /usr/lib/os-release
 COPY overlays/identity/fedora-release /usr/lib/fedora-release
 COPY overlays/identity/issue /usr/lib/issue
 COPY overlays/identity/issue.net /usr/lib/issue.net
+COPY overlays/dracut/50-plymouth.conf /usr/lib/dracut/dracut.conf.d/50-plymouth.conf
+COPY overlays/plymouth/plymouthd.defaults /usr/share/plymouth/plymouthd.defaults
+COPY overlays/tmpfiles/sorabbyngo-plymouth.conf /usr/lib/tmpfiles.d/sorabbyngo-plymouth.conf
+RUN set -eu; set -- /usr/lib/modules/*; [ "$#" -eq 1 ]; kver="${1##*/}"; env DRACUT_NO_XATTR=1 dracut -vf "/usr/lib/modules/${kver}/initramfs.img" "$kver"
 
 RUN set -eu; \
     grep -qx 'ID=sorabbyngo' /usr/lib/os-release; \
