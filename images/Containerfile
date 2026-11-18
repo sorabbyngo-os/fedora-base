@@ -1,4 +1,4 @@
-ARG FEDORA_VERSION=45
+ARG FEDORA_VERSION=44
 FROM quay.io/fedora/fedora-bootc:${FEDORA_VERSION}
 ARG FEDORA_VERSION
 ARG PACKAGE_SETS="core security containers"
@@ -13,7 +13,20 @@ RUN set -eu; \
     rm -rf /tmp/pkg /tmp/packages.txt /var/cache/libdnf5 /var/cache/ldconfig /var/lib/dnf/repos /var/log/dnf5.log /run/dnf
 
 COPY overlays/os-release /usr/lib/os-release
-RUN sed -i "s/@FEDORA_VERSION@/${FEDORA_VERSION}/" /usr/lib/os-release
+RUN sed -i "s/@FEDORA_VERSION@/${FEDORA_VERSION}/g" /usr/lib/os-release
+
+COPY overlays/identity/fedora-release /usr/lib/fedora-release
+COPY overlays/identity/issue /usr/lib/issue
+COPY overlays/identity/issue.net /usr/lib/issue.net
+
+RUN set -eu; \
+    grep -qx 'ID=sorabbyngo' /usr/lib/os-release; \
+    grep -qx 'VERSION_ID="1.0"' /usr/lib/os-release; \
+    grep -qx 'PRETTY_NAME="Sorabbyngo OS ONE 1.0 (Pre-alpha)"' /usr/lib/os-release; \
+    grep -Fqx "SORABBYNGO_BASE=\"Fedora ${FEDORA_VERSION}\"" /usr/lib/os-release; \
+    grep -qx 'Sorabbyngo OS ONE' /usr/lib/fedora-release; \
+    grep -qx 'Sorabbyngo OS ONE' /usr/lib/issue; \
+    grep -qx 'Sorabbyngo OS ONE' /usr/lib/issue.net
 
 COPY presets/sorabbyngo.preset /usr/lib/systemd/system-preset/80-sorabbyngo.preset
 RUN systemctl preset-all --preset-mode=enable-only

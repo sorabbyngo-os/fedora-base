@@ -1,13 +1,33 @@
 # Vendored upstream sources
 
-For offline/remote development. Prefer packaged binaries from Fedora for runtime.
+For offline development and upstream reference.
+Prefer Fedora packages for runtime components.
 
-| Directory | Upstream |
-|-----------|----------|
-| bootc | https://github.com/containers/bootc |
-| fedora-bootc-base-images | Fedora bootc image definitions |
-| ostree | https://github.com/ostreedev/ostree |
-| rpm-ostree | https://github.com/coreos/rpm-ostree |
-| selinux-policy | https://github.com/fedora-selinux/selinux-policy |
-| selinux-userspace | https://github.com/fedora-selinux/selinux |
-| rpm / systemd / fedora-* | Already present; packaging/reference only |
+## Boot
+- boot/bootc
+- boot/fedora-bootc-base-images
+- boot/ostree
+
+## Init
+- init/systemd
+- init/fedora-systemd
+
+## Packaging
+- packaging/rpm
+- packaging/fedora-rpm
+- packaging/rpm-l10n
+
+## Security
+- security/selinux-policy
+- security/selinux-userspace
+
+## Compositors
+- compositor/smithay
+- compositor/wlroots
+
+## Display protocols
+- display/wayland
+- display/wayland-protocols
+
+These are upstream reference trees. Keep Sorabbyngo-specific
+patches, configuration, and build recipes separate.

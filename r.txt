@@ -1,0 +1,1309 @@
+f35@fedora:~/sorabbyngo/sorabbyngo-os/fedora-base$ cd ~/sorabbyngo/sorabbyngo-os/fedora-base || exit 1
+
+printf '\n===== GIT INDEX MODES =====\n'
+git ls-files --stage -- sources/ostree sources/rpm-ostree
+
+printf '\n===== SUBMODULE STATUS =====\n'
+git submodule status || true
+
+printf '\n===== SUBMODULE CONFIGURATION =====\n'
+cat .gitmodules
+
+printf '\n===== RPM-OSTREE REFERENCES =====\n'
+rg -n --hidden --glob '!**/.git/**' 'rpm-ostree' . || true
+
+printf '\n===== TRACKED SOURCE ROOTS =====\n'
+git ls-files sources | awk -F/ 'NF >= 2 {print $2}' | sort -u
+
+===== GIT INDEX MODES =====
+100644 6804e5218c94b8e85e2c36e63f5ad4574cda78ea 0	sources/ostree/.cci.jenkinsfile
+100644 2082209559cdfa50c2c7312ef3611d5f7cc33b44 0	sources/ostree/.clang-format
+100644 e9c855266b82e6a7b8463317bd19e4fe08912db4 0	sources/ostree/.copr/Makefile
+100644 35140408952c53560859ef46f3a7523e1edf966e 0	sources/ostree/.dir-locals.el
+100644 b6bec9ea6b05ac19b259a465f221cb4a189eff12 0	sources/ostree/.dockerignore
+100644 89742b6981fd1938e2f1d3d858126a0b081f55aa 0	sources/ostree/.editorconfig
+100644 d00491fd7e5bb6fa28c517a0bb32b8b506539d4d 0	sources/ostree/.fmf/version
+100644 1585c843396c7c6f333d17128209aa324aac736f 0	sources/ostree/.gemini/config.yaml
+100644 ff290222207b87648c0297d3163c2381beb0e791 0	sources/ostree/.github/ISSUE_TEMPLATE/release-checklist.md
+100644 68ceaa27d0c5a239ac3e2b719170b5a39088c29c 0	sources/ostree/.github/dependabot.yml
+100644 e626115271b0dfa57a8f8548bea021aaa71fd6b6 0	sources/ostree/.github/labeler.yml
+100644 8912a4f547f550a7030c014d9b173f7367d93ebb 0	sources/ostree/.github/workflows/bootc.yaml
+100644 3e3c42951bfd08f9c61f13aced3060be69728016 0	sources/ostree/.github/workflows/docs.yml
+100644 270c6df1e1fe14e98ace35f488893d18d9561b3e 0	sources/ostree/.github/workflows/labeler.yml
+100644 e8fcd42bd4f2b87f0378ab37319266694cd44fec 0	sources/ostree/.github/workflows/release.yml
+100644 1f95a94abdf299a367535ebe9234555170d8fa60 0	sources/ostree/.github/workflows/rust.yml
+100644 25c88b3ab4101ad4035f43d9da29c3b223bcb652 0	sources/ostree/.github/workflows/tests.yml
+100644 00d1685de8e7f8da7b543d4d3ff95b62262b46ec 0	sources/ostree/.gitmodules
+100644 77bde495d8db61d844a2b13d16a19bb53bd95582 0	sources/ostree/.packit.yaml
+100644 142c417a5f4027f28ed60895763a0c7203968717 0	sources/ostree/.vimrc
+120000 49d1b98f97e06d65fd653f76d26aecc174771064 0	sources/ostree/CONTRIBUTING.md
+100644 5bc8fb2c8f757e34a0d8f4644f589d57609e213f 0	sources/ostree/COPYING
+100644 13819b4bec7e4ed34a1dc031369651450c38f7dd 0	sources/ostree/Cargo.toml
+100644 b107cd21efd82d4b09662dbcf36e3839de7702b2 0	sources/ostree/Dockerfile
+100644 fac55a0b7264da34fa8293196791f70fdf364d5f 0	sources/ostree/GNUmakefile
+100644 385d9ec34bed3b732a55bd53395b799bef6e78bd 0	sources/ostree/Justfile
+100644 7e8389e9e6b8ebe21ae54112b84295dbee442a36 0	sources/ostree/Makefile-bash.am
+100644 3ca7879b3d42c8b106411c967b317965e4b8c6ac 0	sources/ostree/Makefile-boot.am
+100644 0b4d22c6466c93d2e50b03f218e883e4d46ec3ed 0	sources/ostree/Makefile-decls.am
+100644 dc56e7060dc4a99aa8e9569de3a5cf5ef91fe518 0	sources/ostree/Makefile-libostree-defines.am
+100644 cffad4163d4966d87547ef319210226dc5aa603d 0	sources/ostree/Makefile-libostree.am
+100644 b36f3af144147b841534e45b2510cb6239f8686b 0	sources/ostree/Makefile-man.am
+100644 6076ae51ed908d2ca4b068f533ea9fbf5d3cc027 0	sources/ostree/Makefile-ostree.am
+100644 07beb1fe405adf059ddc3859f286aec77b37ad16 0	sources/ostree/Makefile-otcore.am
+100644 86c1f6f94f7b0d4295d839104270d1122f241b41 0	sources/ostree/Makefile-otutil.am
+100644 9a1d41371f88827527451a13917413b6fc5a4c13 0	sources/ostree/Makefile-switchroot.am
+100644 e7c5c8cdf2864373a7fc2620146ba94376988038 0	sources/ostree/Makefile-tests.am
+100644 3040baafe26db9a2bf7d641b7f8a039de21af44e 0	sources/ostree/Makefile.am
+100644 ac99a7c2b509233f270cf5c068c72be526eb3406 0	sources/ostree/README.md
+100644 5292ed481045bee875ec9f3adfc9d9f835d61b75 0	sources/ostree/TODO
+100644 80039d1bcca09fc4c8639bec751f9fb489fe8283 0	sources/ostree/apidoc/Makefile.am
+100644 70a7c59e373251493a2bca6d40d1c6d5e0d1ce12 0	sources/ostree/apidoc/ostree-docs.xml
+100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0	sources/ostree/apidoc/ostree-experimental-sections.txt
+100644 596e5e2d75d9ebc1088c67c053286c831ac52389 0	sources/ostree/apidoc/ostree-sections.txt
+100755 689bba8f89327186e98b47062b179b225dabbad0 0	sources/ostree/autogen.sh
+100644 875b34ff139663be317fc0d1be28d47858899725 0	sources/ostree/bash/ostree
+100644 4e134929eca2f934bbb4c4bdaf3efdfdd354cf8f 0	sources/ostree/bsdiff/.gitignore
+100644 5d406657781090cceb182de07f5a3953f367139f 0	sources/ostree/bsdiff/LICENSE
+100644 1d810ed995fb72d1ca489a69ebc5e93ad9469295 0	sources/ostree/bsdiff/Makefile-bsdiff.am
+100644 abd3d7e30b42c5f9e614178811a5a245cce026be 0	sources/ostree/bsdiff/Makefile.am
+100644 2e9ff707aa419b7d7619c7a4101a6d2686bf640a 0	sources/ostree/bsdiff/README.md
+100755 ce934acd21c8aa7d79c123c1c01370dd01586d5c 0	sources/ostree/bsdiff/autogen.sh
+100644 628f1c1a05b470e167d025e9fa99f379a81e67e2 0	sources/ostree/bsdiff/bsdiff.c
+100644 b37da5ff07fe193dee0b83b9307f7220083a0eec 0	sources/ostree/bsdiff/bsdiff.h
+100644 ba54c72893805849afda5e3b2d1f4fef348a9878 0	sources/ostree/bsdiff/bspatch.c
+100644 099c36e48e118df19261d2862f56264df7f7b4a6 0	sources/ostree/bsdiff/bspatch.h
+100644 69de7432733772831a66ed42fb6812e99f9102f4 0	sources/ostree/bsdiff/configure.ac
+100755 4c76c75d797718c7a14e8f06e6854294c419342b 0	sources/ostree/build-aux/useless-if-before-free
+100755 b2bca54c959d8586f9945edf068c056c3fe84ad7 0	sources/ostree/build-aux/vc-list-files
+100644 51ac88be61875444b52737cf85141d8de2255adf 0	sources/ostree/buildutil/attributes.m4
+100644 9a944a0acc883f1626be501de51978158f003823 0	sources/ostree/buildutil/glib-tap.mk
+100644 34dfcf67d7beaa7463ec3389df55ad3a51bb067b 0	sources/ostree/buildutil/glibtests.m4
+100755 6a52d170c881dc648c4bec56d849b5c868590f28 0	sources/ostree/buildutil/tap-driver.sh
+100755 e35f2a4afc4b3ff738da9c2ceb5f24a8aa6df474 0	sources/ostree/buildutil/tap-test
+100644 51e1833d264289ba47b0bcca217cbee5cc651294 0	sources/ostree/cfg.mk
+100644 6bbe5fe99179d0013a2cf6308f6b92cb4c0e2e15 0	sources/ostree/ci/Makefile.dist-packaging
+100755 f0d984310c85f37bb02a13e7325ada158df0abf4 0	sources/ostree/ci/build-check-sanitized.sh
+100755 1087dc5600e3039c3af8d02955afa177f9157b17 0	sources/ostree/ci/build-check.sh
+100755 1b67285e82f67439e4423ae2c2becdb9a81a63ef 0	sources/ostree/ci/build-rpm.sh
+100755 18bc529aafdc71a2072b3b89c8d5137027e0f897 0	sources/ostree/ci/build.sh
+100644 d1864f3af4da60e822567564e6e8da65d5da8967 0	sources/ostree/ci/c9s-buildroot.repo
+100755 95e2433e1664ea90c09d0bbe4c459b8c5dcec3ce 0	sources/ostree/ci/ci-commitmessage-submodules.sh
+100755 ca60a4a370f6b7e47a873ddcfe807d48dfbc058f 0	sources/ostree/ci/ci-release-build.sh
+100755 1cf0a23c64f274442973010b846e5bcf43d20544 0	sources/ostree/ci/codestyle.sh
+100644 6b10c5841bffff36028fa10f43fabe95057eff4a 0	sources/ostree/ci/flatpak-1.4.1-ostree-gpg-errors.patch
+100755 e155d89743b85077ad5c55f6982e1a68bbcea9b6 0	sources/ostree/ci/flatpak.sh
+100755 48c16cda770e100f65958d6c0584ce7bbd54c360 0	sources/ostree/ci/gh-build.sh
+100755 da9f8c36bf57b03eb61b03b1a79a54507b01c07d 0	sources/ostree/ci/gh-install.sh
+100755 733c9b23a6d613cc4830efef3efff1228143c609 0	sources/ostree/ci/installdeps.sh
+100644 d5636805cb4fae230cfce68ac6eda27bb3e0f8ce 0	sources/ostree/ci/libbuild.sh
+100755 22f65a50d77445794d83198725484ab1fb5058e7 0	sources/ostree/ci/make-git-snapshot.sh
+100755 1cf191e8d9739e57a07e1d1f0783d45461f2aee6 0	sources/ostree/ci/packit-fix-spec.sh
+100755 d0805bb5d4a210380796dc3ad08afcf62b723a32 0	sources/ostree/ci/rpmbuild-cwd
+100755 554cde69f24b7810cf26c2452768f464305ce122 0	sources/ostree/ci/rpmostree.sh
+100644 60909b1fae9259d3465504e8462cb237d4593f2d 0	sources/ostree/coccinelle/README.md
+100644 147a8e027d2a0d17f51726a5084d85f3298ed735 0	sources/ostree/coccinelle/new-error.cocci
+100644 7df248c364a8e64d3f0c298acc40e0aa0c7acb43 0	sources/ostree/coccinelle/newstyle.cocci
+100644 2c911d490da1ef5670bf555322b69f9d44b961a7 0	sources/ostree/configure.ac
+100644 dce0330a261dc3a87d1bc66fc0fa021837f49a16 0	sources/ostree/deny.toml
+100644 3574c9e2aa507a3f0150fb44e8bd028901da6c21 0	sources/ostree/docs/CONTRIBUTING.md
+100644 47109d93567462fcfd571fd3f85091cd880ff3bf 0	sources/ostree/docs/Gemfile
+100644 b7292e98e0d3320fa244bd90a6d3bc43325191f0 0	sources/ostree/docs/README-historical.md
+100644 b19db00a883a0afa0bdaf249f9e239fe5c5d2c07 0	sources/ostree/docs/README.md
+100644 4af7c390bc5609a6568e0e555768d0b8727a2e49 0	sources/ostree/docs/_config.yml
+100644 a4554be881de8563810430345130eb0484fb6f92 0	sources/ostree/docs/_sass/color_schemes/coreos.scss
+100644 480e8e4f1df2588dba127804921703888d3a6c44 0	sources/ostree/docs/adapting-existing.md
+100644 5091ee8036a1c0472cb867fab1c4ac38d89f23b3 0	sources/ostree/docs/atomic-rollbacks.md
+100644 75d925e4af45f4c3a700e013d81fc3d52cc03753 0	sources/ostree/docs/atomic-upgrades.md
+100644 31a0e89a61a56089550e111814dc89f52c9cf83f 0	sources/ostree/docs/authenticated-repos.md
+100644 b611ee9aaaec1ec6fe006ec8233415977be98ac0 0	sources/ostree/docs/bootloaders.md
+100644 2f49015ad3a3e7a4ba3ea5264d2dbd9cc7b6303c 0	sources/ostree/docs/buildsystem-and-repos.md
+100644 f575a73d29f12bb0ad3f3e4eaa2cd92b52aff09c 0	sources/ostree/docs/composefs.md
+100644 0bcf8feb5f35b9683eb2ef2cc6c812cbe0c0bb78 0	sources/ostree/docs/contributing-tutorial.md
+100644 60f02cdca32bc38b3da75e4326e8b746f48e698b 0	sources/ostree/docs/copying-deltas.md
+100644 03d885c74d222a6e63c89622182802e7ea7ee9b8 0	sources/ostree/docs/deployment.md
+100644 30d506807c74955f9af16cc39533aed33476e932 0	sources/ostree/docs/formats.md
+100644 ba10165f206ac5ae797845c3ee5d371e6fd2eccc 0	sources/ostree/docs/ima.md
+100644 6d572d4152124eec3bd9487023a9745e8327f71b 0	sources/ostree/docs/index.md
+100644 4718735f898601a17bc87493b14d0d271ae1a8f4 0	sources/ostree/docs/introduction.md
+100755 5975d5ccc498bf9fe0aa029cd7154287507b34d4 0	sources/ostree/docs/prep-docs.sh
+100644 336b79a1fb38aa150e81dbf939ecf53f2e7c90ef 0	sources/ostree/docs/related-projects.md
+100644 d487a25d40e791978d452db0ebf3c13f32eaab80 0	sources/ostree/docs/repo.md
+100644 d530e553804af50ab24ca685bc991fd2aa1d82cd 0	sources/ostree/docs/repository-management.md
+100644 392ee5cdc9bdcb0f934c645b18ed2719f4e177f8 0	sources/ostree/docs/var.md
+100644 643c2ca9ae591a92a6b5a327d9f21ade7cebb2cf 0	sources/ostree/git.mk
+100644 14b0eed2b7c688c2cc877c5ccdbc692ef22c99cb 0	sources/ostree/hack/Containerfile.packit
+100644 f158e2754bc30bdecb00e74fd9aade0172839e23 0	sources/ostree/hack/packages.txt
+100755 1d324634af6106e3a7f4f6616ec4e30dc45d1ecf 0	sources/ostree/hack/provision-derived.sh
+100755 727e35f7e742609842ff1aab261fadde1f7eb4a0 0	sources/ostree/hack/provision-packit.sh
+100644 f75435d87bfc97fa59f9987bbc4b4317e4d67865 0	sources/ostree/libglnx/.gitignore
+100644 d9e465aaa345a959166489cf13ba3a16080b77e5 0	sources/ostree/libglnx/.gitlab-ci.yml
+100644 cb402477d1367627a5b95669d26c6437aeaaea7a 0	sources/ostree/libglnx/COPYING
+100644 eb3a4cd1dba061409b6ac37fa50327f428740c8d 0	sources/ostree/libglnx/LICENSES/LGPL-2.0-or-later.txt
+100644 4362b49151d7b34ef83b3067a8f9c9f877d72a0e 0	sources/ostree/libglnx/LICENSES/LGPL-2.1-or-later.txt
+100644 d78b44306d8d5966923f643f1d576be233b00661 0	sources/ostree/libglnx/LICENSES/LicenseRef-old-glib-tests.txt
+100644 5934a2b6f1974ae227b38b3ac8b977e59a5077f4 0	sources/ostree/libglnx/Makefile-libglnx.am
+100644 ef2cc9d16d07b31349290d9e3bbcc6c691f3de9f 0	sources/ostree/libglnx/README.md
+100644 9b15ee47e87bee0ae97f5071d18eec7b0abe09b0 0	sources/ostree/libglnx/glnx-backport-autocleanups.h
+100644 8eb91b94cf266999f30ea146c77d5658321dac7b 0	sources/ostree/libglnx/glnx-backport-autoptr.h
+100644 3440872d131dbd0dba6e3442a4bf1d71dbbf7b8e 0	sources/ostree/libglnx/glnx-backport-testutils.c
+100644 f579c0eb45bb60c9f06035ea7bdb0bad822e65e9 0	sources/ostree/libglnx/glnx-backport-testutils.h
+100644 391c154bfdf241a4ccab822a13a6e13f70ba8014 0	sources/ostree/libglnx/glnx-backports.c
+100644 121e073116f27d669f026706c7bc750486644323 0	sources/ostree/libglnx/glnx-backports.h
+100644 f6ce0d49ad46969b2d4d0d4b6902848e08614f60 0	sources/ostree/libglnx/glnx-console.c
+100644 3d94895b3f39a6a2ed65c160f30d2e549bd286b8 0	sources/ostree/libglnx/glnx-console.h
+100644 b78e2dfb633daf89c1fcb68c3b1cec9ce6e351d5 0	sources/ostree/libglnx/glnx-dirfd.c
+100644 1960820c1c36ec646347a9aaec4356a9322ce176 0	sources/ostree/libglnx/glnx-dirfd.h
+100644 cb0df13fa9dcf51ffffb8fa80cdc446a61aec04b 0	sources/ostree/libglnx/glnx-errors.c
+100644 e1dc3a568fe60781d896b7a82606e74baa529a33 0	sources/ostree/libglnx/glnx-errors.h
+100644 98732051aef02e5e7a697149c7ea19926a602191 0	sources/ostree/libglnx/glnx-fdio.c
+100644 af5347957ac6d2295cf6076d52148a978df13a98 0	sources/ostree/libglnx/glnx-fdio.h
+100644 8bd551411b257fd1ccfb09a33281551852313aea 0	sources/ostree/libglnx/glnx-local-alloc.c
+100644 65ae747f6aa5869ca3ad4789c092713661d1e27a 0	sources/ostree/libglnx/glnx-local-alloc.h
+100644 fcda84cfd4ceb7e97afa9eae6c421e0b710e8c9b 0	sources/ostree/libglnx/glnx-lockfile.c
+100644 6604d707e5239612b5ad33f06aacc793b3adddd4 0	sources/ostree/libglnx/glnx-lockfile.h
+100644 b92e9e2e9045cab08bcd81c78d73c0b7ffd65ab6 0	sources/ostree/libglnx/glnx-macros.h
+100644 3ee9dd56aadb4fbf1d61bf58e13480a885313c6b 0	sources/ostree/libglnx/glnx-missing-syscall.h
+100644 5439ae5809a166c7e991f231f06169e86acc474d 0	sources/ostree/libglnx/glnx-missing.h
+100644 5ebe7f8886e02a95886a0814378c1fa15d51dd16 0	sources/ostree/libglnx/glnx-shutil.c
+100644 6a00312ee4dc48eee7d5a34938a6f3f6a1ba0165 0	sources/ostree/libglnx/glnx-shutil.h
+100644 84fd6094eedfcfbe4ea47585f37d55b1ce7516a6 0	sources/ostree/libglnx/glnx-xattrs.c
+100644 b0288504be2cd6a7b2546fd5de12bb7d5792d9d3 0	sources/ostree/libglnx/glnx-xattrs.h
+100644 6752e884e7b4bc717b2057ea4c34991be8da99ce 0	sources/ostree/libglnx/libglnx.doap
+100644 63d73adc3bfd2b91895244a7375ba4248f31659f 0	sources/ostree/libglnx/libglnx.h
+100644 bd0d580ce3fe6e7b54d0f9e32802fa59e9ef32da 0	sources/ostree/libglnx/libglnx.m4
+100644 a163e99403525704a56ac87a1ada636fd8911d88 0	sources/ostree/libglnx/meson.build
+100644 1028017fb9ecfdfe36c9b109a5412ac55a5602d0 0	sources/ostree/libglnx/meson_options.txt
+100644 3eb2ba14386680dd72d42f92386392c5b31e76d6 0	sources/ostree/libglnx/tests/libglnx-testlib.c
+100644 dccc7e5584d7eb893e4756ca3cde80106169d30e 0	sources/ostree/libglnx/tests/libglnx-testlib.h
+100644 6c46b45cd09bb69bebbd4c1414855edb216914ae 0	sources/ostree/libglnx/tests/meson.build
+100644 3683791d44523f9388ca746115b2e907072a60c5 0	sources/ostree/libglnx/tests/test-libglnx-backports.c
+100644 3b2a485612a9f5621c57831bd6c118c63ba3cb9f 0	sources/ostree/libglnx/tests/test-libglnx-errors.c
+100644 b9aa682af0b4daa58f6633bea8d62260249ad011 0	sources/ostree/libglnx/tests/test-libglnx-fdio.c
+100644 ec669d322b58648a7f6f96faa2d70545f627d949 0	sources/ostree/libglnx/tests/test-libglnx-macros.c
+100644 28b34abe0f3bdd8ac19f3e469ed0598f8677889c 0	sources/ostree/libglnx/tests/test-libglnx-shutil.c
+100644 449481d104e51b5295d166751073d9f3ec599919 0	sources/ostree/libglnx/tests/test-libglnx-testing.c
+100644 1de9acdb28c4fb17750a33962b3752dbdfff0399 0	sources/ostree/libglnx/tests/test-libglnx-xattrs.c
+100644 0886678f41f60e9a43d75487a576b415dc3201b5 0	sources/ostree/libglnx/tests/testing-helper.c
+100644 ec6149fa14ab710556933c52bb70010ffd9def61 0	sources/ostree/libglnx/tests/use-as-subproject/.gitignore
+100644 cc43a093dcae5cf13dcbcead955e57948bf364d5 0	sources/ostree/libglnx/tests/use-as-subproject/README
+100644 dffc647bc9150cff3945843b890c6a93bb3eb1ea 0	sources/ostree/libglnx/tests/use-as-subproject/config.h
+100644 bffb52ac50862ecd12f89e446e85628ce3d2164a 0	sources/ostree/libglnx/tests/use-as-subproject/dummy-config.h.in
+100644 59fd736addbd427c2bc7d166fe7c2de41eea3df7 0	sources/ostree/libglnx/tests/use-as-subproject/meson.build
+100644 4b364f1a0a2eef301026e985d126f4ba8b04390f 0	sources/ostree/libglnx/tests/use-as-subproject/trivial.c
+100644 0e14db0bfe97490e2244df670be21d2e77ed2fdb 0	sources/ostree/libglnx/tests/use-as-subproject/use-libglnx.c
+100644 9a955b474092c45ef120726c1e3109c81ec815d2 0	sources/ostree/libglnx/tests/use-as-subproject/use-testlib.c
+100644 17a425d456acf7d8fd7df46a78d6ef9f9baf5a0e 0	sources/ostree/man/html.xsl
+100644 63ae6e5bd64245bad98f83462067a46a3677bb03 0	sources/ostree/man/index.xml
+100644 2a7217166ea9922f3137db807da175b97e731c17 0	sources/ostree/man/ostree-admin-cleanup.xml
+100644 5866946e7e7a291e81a3e505d4319ff1dd79a30a 0	sources/ostree/man/ostree-admin-config-diff.xml
+100644 7d24a381f63bfd84ffe5cb937871a5201337ef00 0	sources/ostree/man/ostree-admin-deploy.xml
+100644 3800cf1771ed27ae76d1fa8044e83b9000b1923b 0	sources/ostree/man/ostree-admin-init-fs.xml
+100644 cbd122fc04202cc9fe70fac5f3932fe514920d8f 0	sources/ostree/man/ostree-admin-instutil.xml
+100644 9dea0fd07efe71545e8fb6dc9bf77256ea338ffb 0	sources/ostree/man/ostree-admin-lock-finalization.xml
+100644 43705afc4e931201ac9f74ed2a2589a67bc05097 0	sources/ostree/man/ostree-admin-os-init.xml
+100644 1a72ced67e94ec74e40693a5ba24e0089f69a249 0	sources/ostree/man/ostree-admin-pin.xml
+100644 e44d2f258388c39e731f1740c9417cc506a65251 0	sources/ostree/man/ostree-admin-post-copy.xml
+100644 f6b02211ba05678b4cc4114c86e0617c4a11eb97 0	sources/ostree/man/ostree-admin-prepare-soft-reboot.xml
+100644 a25d0cc0545ff93df238fc8474e2ebfd91485eb5 0	sources/ostree/man/ostree-admin-set-default.xml
+100644 2b2ba5869d227af360d8005b3ab067512ae324f5 0	sources/ostree/man/ostree-admin-set-origin.xml
+100644 840695fa2fd38bee876564e571cbec8cfc3ad821 0	sources/ostree/man/ostree-admin-stateroot-init.xml
+100644 10dd2e2b95d3ace84b6b83b0bdb7b428802617a6 0	sources/ostree/man/ostree-admin-status.xml
+100644 3c3e12fbb58780d1b519a30dbb40fa588e579aee 0	sources/ostree/man/ostree-admin-switch.xml
+100644 18e1b6d7fc88c33164a4c0d688de8fa8a4594bdd 0	sources/ostree/man/ostree-admin-undeploy.xml
+100644 3141749f1f9690523a868297fa3ea12d33f3a635 0	sources/ostree/man/ostree-admin-unlock.xml
+100644 6309b693f4976e43d266e95111523c63bc9005e8 0	sources/ostree/man/ostree-admin-upgrade.xml
+100644 986b0336e42631673264f7ab66646bf7659a6c15 0	sources/ostree/man/ostree-admin.xml
+100644 f26ed20d21f3e9a629df7e05194bc9c0b1ffdffb 0	sources/ostree/man/ostree-cat.xml
+100644 de89c78c0302c7d308f313ce103d4695aea69a9a 0	sources/ostree/man/ostree-checkout.xml
+100644 566f15a51e2694ca283c01de03ffbd5189e97527 0	sources/ostree/man/ostree-checksum.xml
+100644 7de5b0f76eab64106607406f01a5ad0576f3f3ab 0	sources/ostree/man/ostree-commit.xml
+100644 c3a0e366b118c67eea82774ea2414e1891bbcf65 0	sources/ostree/man/ostree-config.xml
+100644 46d20187c9c20c92fc5bb3c8c48ffbaaa4d34418 0	sources/ostree/man/ostree-create-usb.xml
+100644 ebfccd4832ff09efa528e03aa307631dfb90d094 0	sources/ostree/man/ostree-diff.xml
+100644 b82e5e9376d854a4bf0623e0d64b38ced4eabedb 0	sources/ostree/man/ostree-export.xml
+100644 651e30a1b1d7366adf9e7fed85711d6059522bc9 0	sources/ostree/man/ostree-find-remotes.xml
+100644 f4f44873fdbf05beecce7c313ec363d5b2a91362 0	sources/ostree/man/ostree-fsck.xml
+100644 60a0cc5bbf4ad3ca43c0e8104225c7f617515627 0	sources/ostree/man/ostree-gpg-sign.xml
+100644 e3e715b776b398a326b8a6287551ee37f8d91735 0	sources/ostree/man/ostree-init.xml
+100644 d95c445f63343f459e2c20227655fd1a874b1c1b 0	sources/ostree/man/ostree-log.xml
+100644 a03e4d423498d6a7fcbabb24710c04ea1705f0f7 0	sources/ostree/man/ostree-ls.xml
+100644 8627886ba366bb1d415c61194ae5320f5d43a1cc 0	sources/ostree/man/ostree-prepare-root.xml
+100644 8a123dfbabce54ba63b5c836a9f5a3543d8fcc04 0	sources/ostree/man/ostree-prune.xml
+100644 b5da39fa31dfe9440dfb9c2523835ae76f48522f 0	sources/ostree/man/ostree-pull-local.xml
+100644 69c6d7ed44262d5c6536f2bf605e98292ab44027 0	sources/ostree/man/ostree-pull.xml
+100644 6948488e032410735e7c621ec42faa7759d02802 0	sources/ostree/man/ostree-refs.xml
+100644 3dc18188df11ee8e2c0fffddfa8f606da105bd31 0	sources/ostree/man/ostree-remote.xml
+100644 47c8474635664dd6c950e655e9ab2df259f8d900 0	sources/ostree/man/ostree-reset.xml
+100644 5e839b946e6775e9bd54c8968343294dadec953e 0	sources/ostree/man/ostree-rev-parse.xml
+100644 275b68f24625f4371940a6a72b8cb41dce8e0fef 0	sources/ostree/man/ostree-show.xml
+100644 462169ceefaade3942f7a49736dd2589499f2a2e 0	sources/ostree/man/ostree-sign.xml
+100644 f670198a0cb2302ebab0a1dea2f7c211a7004c48 0	sources/ostree/man/ostree-state-overlay@.service.xml
+100644 55ea8a3db2caf010a66f6e90d1a035628f636c4f 0	sources/ostree/man/ostree-static-delta.xml
+100644 1ec88669b73de73ac221b2c8e085722a352f20f9 0	sources/ostree/man/ostree-summary.xml
+100644 a9cc75bd2b78335e1cc8fac9f46f5162fbf2f9e6 0	sources/ostree/man/ostree.repo-config.xml
+100644 e3310a2fc5d0a528332a2e3b3b712c5a8aed6925 0	sources/ostree/man/ostree.repo.xml
+100644 25d72de4858c5119531df9312d18aed9e3fabbd1 0	sources/ostree/man/ostree.xml
+100644 c396025a469835f26fc0c0194af376483d184870 0	sources/ostree/man/rofiles-fuse.xml
+100755 a9335007a4290d60ca3bd2d2383a38bfe87bc79e 0	sources/ostree/manual-tests/static-delta-generate-crosscheck.sh
+100644 072613601efcffe80f9e8a6c89790132914538b9 0	sources/ostree/manual-tests/upgrade-loop.js
+100644 f4c73c3545f95b5afd66047b54b9e47ff967736d 0	sources/ostree/mkdocs.yml
+100644 35d053b53e04676af0a991cff81cc92105b5e9e7 0	sources/ostree/ostree.doap
+100755 2e831552725d80756c6e8851c6d61697d8491e4a 0	sources/ostree/rust-bindings/.ci/generate-test-jobs.sh
+100644 afc6bbe35e9bf7c9bcc54ab49a391c804e25bc45 0	sources/ostree/rust-bindings/.ci/gitlab-ci-base.yml
+100644 155a4e1114ade90a2a9ca5c4961ad65aebd02610 0	sources/ostree/rust-bindings/.gitignore
+100644 bd32f32155d4d74403fd2fd27dc6d9de35701fa6 0	sources/ostree/rust-bindings/LICENSE
+100644 5bc8fb2c8f757e34a0d8f4644f589d57609e213f 0	sources/ostree/rust-bindings/LICENSE.LGPL2
+100644 4362b49151d7b34ef83b3067a8f9c9f877d72a0e 0	sources/ostree/rust-bindings/LICENSE.LGPL2.1
+100644 e86440242470011da92d0b301048e398a39881ba 0	sources/ostree/rust-bindings/Makefile
+100644 2dba76cf6da50dfac59c5b60c13455bc9ac022bf 0	sources/ostree/rust-bindings/README.md
+100644 f5f664db0c96537e969afcd04b8e3d9c8059ac35 0	sources/ostree/rust-bindings/conf/ostree-sys.toml
+100644 8807b459f163b2abb69b5da45fa24f1e6cbc61fc 0	sources/ostree/rust-bindings/conf/ostree.toml
+100644 0af462c29a24c2ab5b455aa62daf3d1e8768ac1f 0	sources/ostree/rust-bindings/gir-files/.gitignore
+100644 5b781ce7bcf93b200178fa929af1208c338247f1 0	sources/ostree/rust-bindings/src/.gitattributes
+100644 f337852da4d914cf3531a63ababf309b6e13a1f9 0	sources/ostree/rust-bindings/src/auto/async_progress.rs
+100644 1957b8aa45a9f2a7cd678bff97dffc886811b2a6 0	sources/ostree/rust-bindings/src/auto/blob_reader.rs
+100644 9f7a1595d809acb90311d65a95f20b6ebb0f2fb3 0	sources/ostree/rust-bindings/src/auto/bootconfig_parser.rs
+100644 c2887177e8303a38e8b1596f3780a65809fef555 0	sources/ostree/rust-bindings/src/auto/collection_ref.rs
+100644 6a320cc2c0e95fa06becf5812531de92b61d3a5e 0	sources/ostree/rust-bindings/src/auto/commit_sizes_entry.rs
+100644 602ce485130f875962a4802616959f1da20f1fbb 0	sources/ostree/rust-bindings/src/auto/constants.rs
+100644 93ac52886767928912e4f3ec74bfd3aa2506607b 0	sources/ostree/rust-bindings/src/auto/content_writer.rs
+100644 c095dec1dede8587745ae9509a75650f4eee5445 0	sources/ostree/rust-bindings/src/auto/deployment.rs
+100644 3ffea0563834f16973b4d7f90428a2491acb88aa 0	sources/ostree/rust-bindings/src/auto/diff_item.rs
+100644 e55c187cb5948db3d4037e45cd64511273549969 0	sources/ostree/rust-bindings/src/auto/enums.rs
+100644 77df3f1cfcbaee4b1ca4e44f9b0e7bcc1f2786b2 0	sources/ostree/rust-bindings/src/auto/flags.rs
+100644 df5744b882718911ba0941f8c3e0f677171b28bd 0	sources/ostree/rust-bindings/src/auto/functions.rs
+100644 25dea77239c1b40436b6b37b1ebd60df7069709e 0	sources/ostree/rust-bindings/src/auto/gpg_verify_result.rs
+100644 5b4a1592d3a676fa788351f6fe058582001ce607 0	sources/ostree/rust-bindings/src/auto/mod.rs
+100644 f560eede5889ff2dcf7febce31ec6012bf3f0729 0	sources/ostree/rust-bindings/src/auto/mutable_tree.rs
+100644 856554ea7fad06738bcf6d5d6a12a7344e8aa038 0	sources/ostree/rust-bindings/src/auto/remote.rs
+100644 bb9d4da38fc74394d877ad43eedf09b8ac559aa6 0	sources/ostree/rust-bindings/src/auto/repo.rs
+100644 fea91c9f02a306bb4c3327987d5d300be5159fa5 0	sources/ostree/rust-bindings/src/auto/repo_commit_modifier.rs
+100644 ec59e0df9a7af1f3deebe448cd8b05898dfce0c0 0	sources/ostree/rust-bindings/src/auto/repo_dev_ino_cache.rs
+100644 cddaac9231b1020c9450bf8bb875f2c095ccdc17 0	sources/ostree/rust-bindings/src/auto/repo_file.rs
+100644 104bd4c784313e9db7be5c23596d04dec536cd3d 0	sources/ostree/rust-bindings/src/auto/repo_finder.rs
+100644 3d15cd7807dc693573fb7752700d3414463cf7ae 0	sources/ostree/rust-bindings/src/auto/repo_finder_avahi.rs
+100644 c2b0c901d6e9694b74eaff02cb634c79abda6ab3 0	sources/ostree/rust-bindings/src/auto/repo_finder_config.rs
+100644 1a87b8b385ec305e7c138c5e972dfbf8bc65676d 0	sources/ostree/rust-bindings/src/auto/repo_finder_mount.rs
+100644 e6fae9560805e78b505e26d3c60d64e0e55e876c 0	sources/ostree/rust-bindings/src/auto/repo_finder_override.rs
+100644 94d9bf8a194318b54b9512101443ef6a82374019 0	sources/ostree/rust-bindings/src/auto/repo_finder_result.rs
+100644 e833771848f59450e2818cde3d8a43d4efddb324 0	sources/ostree/rust-bindings/src/auto/se_policy.rs
+100644 2da863ea9839c7a8de255615d35be434d628878b 0	sources/ostree/rust-bindings/src/auto/sign.rs
+100644 7728723215062d3f9b1d144a790ab94f9970a230 0	sources/ostree/rust-bindings/src/auto/sysroot.rs
+100644 b0d0c554c6a1281393c711afd590312959e8e630 0	sources/ostree/rust-bindings/src/auto/sysroot_upgrader.rs
+100644 cc83a324eae16f1b6973a8dc79ceb8e13051e6c0 0	sources/ostree/rust-bindings/src/auto/versions.txt
+100644 d9e522f38247d8c4aa140dfb00ad208958cfa783 0	sources/ostree/rust-bindings/src/checksum.rs
+100644 1e44240bbf988487f874d738a46dbecb510e6150 0	sources/ostree/rust-bindings/src/collection_ref.rs
+100644 2196503e1f8996fd27820f44393d4b39494ac9b0 0	sources/ostree/rust-bindings/src/commit_sizes_entry.rs
+100644 6586e7b6b944bd28497ea276a28e42a820fdb2b8 0	sources/ostree/rust-bindings/src/constants.rs
+100644 5e294b1b65f24726a5e50b4a28e099ef67fc7db6 0	sources/ostree/rust-bindings/src/core.rs
+100644 d408ce0d10a54ae80302028261d1c276d6362aab 0	sources/ostree/rust-bindings/src/deployment.rs
+100644 2372da607a923cd1bc82ed8b6f9a5105e0aaa772 0	sources/ostree/rust-bindings/src/functions.rs
+100644 ddce4f8d74eb482af8b39e20222b165818943d13 0	sources/ostree/rust-bindings/src/kernel_args.rs
+100644 8013c4cfb62734954c50bed23459461c6d498622 0	sources/ostree/rust-bindings/src/lib.rs
+100644 dd5921728957134b79922acf5b03160bfbbb985d 0	sources/ostree/rust-bindings/src/mutable_tree.rs
+100644 3dfb8432c4283c0ecafede13433d653086df062a 0	sources/ostree/rust-bindings/src/object_details.rs
+100644 772b0d88eeb737952deab60b546b66dcf538d9ec 0	sources/ostree/rust-bindings/src/object_name.rs
+100644 ff826c75fb05c0c5f81fa3b750b7be66ef19513f 0	sources/ostree/rust-bindings/src/repo.rs
+100644 13223cc44bccd60fce9d909b3baf40a321323650 0	sources/ostree/rust-bindings/src/repo_checkout_at_options/mod.rs
+100644 c63b3ffb303c0893ece67e688b89f0800f9ccf78 0	sources/ostree/rust-bindings/src/repo_checkout_at_options/repo_checkout_filter.rs
+100644 fef985c29e38adea23d1ca0f42c69d8d7755b457 0	sources/ostree/rust-bindings/src/repo_transaction_stats.rs
+100644 43f8c11facbfe862712a714930b5c5825557baf1 0	sources/ostree/rust-bindings/src/se_policy.rs
+100644 7169057b029633181ad6d5e52b66c4408aa35fd9 0	sources/ostree/rust-bindings/src/sysroot.rs
+100644 39d69dae42cd46f27a05555f1737b4d15e009d43 0	sources/ostree/rust-bindings/src/sysroot_deploy_tree_opts.rs
+100644 0c68e764aa2b1d2c44a609b7aec24f4428245797 0	sources/ostree/rust-bindings/src/sysroot_write_deployments_opts.rs
+100644 515bd3858193b0628ad164000cacc2b3efb1208f 0	sources/ostree/rust-bindings/src/tests/collection_ref.rs
+100644 288b1b6f893ec44b6b94aed0e8cf22743dc21f6a 0	sources/ostree/rust-bindings/src/tests/kernel_args.rs
+100644 ca79e91597040fc0428c54b4b622b990d2fbc8c1 0	sources/ostree/rust-bindings/src/tests/mod.rs
+100644 59a6792db139671e84583ad792665637ab2a7644 0	sources/ostree/rust-bindings/src/tests/repo.rs
+100644 2eb478c75ceb5a4f85d7d8894010fcc916e334de 0	sources/ostree/rust-bindings/sys/Cargo.toml
+100644 bd32f32155d4d74403fd2fd27dc6d9de35701fa6 0	sources/ostree/rust-bindings/sys/LICENSE
+100644 9eac38c61a47fd50bd6c3fe5f2f1e81bb6a138dd 0	sources/ostree/rust-bindings/sys/build.rs
+100644 cc83a324eae16f1b6973a8dc79ceb8e13051e6c0 0	sources/ostree/rust-bindings/sys/src/auto/versions.txt
+100644 253e73d15fa82ac4a90088e31f5d2dd5760d9f20 0	sources/ostree/rust-bindings/sys/src/lib.rs
+100644 1319576ba4ef900211abdd0c8c4c89e576d42dac 0	sources/ostree/rust-bindings/sys/src/manual.rs
+100644 72e8ffc0db8aad71a934dd11e5968bd5109e54b4 0	sources/ostree/rust-bindings/sys/tests/.clang-format-ignore
+100644 cf5a3474671dcbb4070321b2716225dbe7b715df 0	sources/ostree/rust-bindings/sys/tests/abi.rs
+100644 bc5c3533f4b38baefc3a3ca7b60713a3666dd456 0	sources/ostree/rust-bindings/sys/tests/constant.c
+100644 3db57845bef2b384d4b40e54f46aee269bc7bf6a 0	sources/ostree/rust-bindings/sys/tests/layout.c
+100644 15ce6fb4f2ae3466e4d9f5244f212e6a9a621041 0	sources/ostree/rust-bindings/sys/tests/manual.h
+100644 7ac13cf2083e5a1c6707c2a3c4c3b5b91cff5389 0	sources/ostree/rust-bindings/tests/core/mod.rs
+100644 fd39eda107121340ec04f790c9680533323308d7 0	sources/ostree/rust-bindings/tests/data/test.tar
+100644 a15961fbe12e35b925a26d49cbbece0094ae0c8e 0	sources/ostree/rust-bindings/tests/functions/mod.rs
+100644 0c79b4286adea61b7484d322c11900d33723b9a7 0	sources/ostree/rust-bindings/tests/repo/checkout_at.rs
+100644 f6b74028f9242bfd8db90c1a682fcfe1929e5b0c 0	sources/ostree/rust-bindings/tests/repo/generate_static.rs
+100644 f0b562f6a7d92df849eab28bde3e869662414a78 0	sources/ostree/rust-bindings/tests/repo/mod.rs
+100644 0dc48ae70177291dd795f00fa6f137838f1bb0c7 0	sources/ostree/rust-bindings/tests/sign/mod.rs
+100644 46e71d76832d5dd0e1db7169202c891d882b7265 0	sources/ostree/rust-bindings/tests/tests.rs
+100644 aed56d431ab1e43ee56469a3058fe3123f022937 0	sources/ostree/rust-bindings/tests/util/mod.rs
+100755 4a70a2eed0f7b1c8aeeb552dd435edfbc081646f 0	sources/ostree/src/boot/dracut/module-setup.sh
+100755 d83d017bdebf17b1eddf81fbd63875811821a639 0	sources/ostree/src/boot/dracut/ostree.conf
+100644 f42356153e926e81b7fea26999e2a3c144394381 0	sources/ostree/src/boot/grub2/grub2-15_ostree
+100644 d1436b65f920b9e894b343909bd144ddaa351d72 0	sources/ostree/src/boot/grub2/ostree-grub-generator
+100644 3aa0659fb340bcde9a64cf953e9c06549f1a2e09 0	sources/ostree/src/boot/mkinitcpio/ostree
+100644 75d26eb73abeffc365e440e6dbf3bf67db062a7b 0	sources/ostree/src/boot/mkinitcpio/ostree-mkinitcpio.conf
+100644 e8b4f42f6a56704cc78131ec943b45cbd6a5cf32 0	sources/ostree/src/boot/ostree-boot-complete.service
+100644 85b5d543b1f9cf838bf57e00e1f9488bbe073011 0	sources/ostree/src/boot/ostree-finalize-staged-hold.service
+100644 897b1da1aee56d1168359efc1daa3c04baa8335d 0	sources/ostree/src/boot/ostree-finalize-staged.service
+100644 4c2b6babe6865fac856b6e9abac41e162eb1f28b 0	sources/ostree/src/boot/ostree-prepare-root.service
+100644 7c0d01a3bb48d9c4ed5ed4c55555147462a6c3f7 0	sources/ostree/src/boot/ostree-remount.service
+100644 dc8aeac51b868fada06a3406e4f31b561dc120ba 0	sources/ostree/src/boot/ostree-state-overlay@.service
+100644 711cd862deb06fb5627236593fe02a4f093895ed 0	sources/ostree/src/boot/ostree-tmpfiles.conf
+100644 9c1d479cbbd528a25ad11ae6f4f08ba258ac9889 0	sources/ostree/src/libostree/README-gpg
+100644 35fe48d817579fe1444cb39dc4ec2ca860b16f4a 0	sources/ostree/src/libostree/README.md
+100644 7e5f3ab6fdf998e2cb2709307af93e83c4497182 0	sources/ostree/src/libostree/bupsplit.c
+100644 1db9e2556dceb30b216825deb75dafa6c7631055 0	sources/ostree/src/libostree/bupsplit.h
+100644 31b4ea8d66e0e554dee43d7c38f6ec09e43324a2 0	sources/ostree/src/libostree/libostree-devel.sym
+100644 154b63fea821c1fd54755e1329d0093ea03735c7 0	sources/ostree/src/libostree/libostree-released.sym
+100644 5072e72ca838f861808a714c79383b39d473329e 0	sources/ostree/src/libostree/ostree-1.pc.in
+100644 9fde759490d01f1b445cd20a720b85c923e691e2 0	sources/ostree/src/libostree/ostree-async-progress.c
+100644 dbc5c70e4191ccf64726a86498b0ef0c0dbbeb65 0	sources/ostree/src/libostree/ostree-async-progress.h
+100644 75c4eecf07d13f8e235b1f7a2398965444ff4c1d 0	sources/ostree/src/libostree/ostree-autocleanups.h
+100644 2a621822587b3ba1ac4b83c371be2a8c505ae946 0	sources/ostree/src/libostree/ostree-blob-reader-base64.c
+100644 b1e78ba2f36c373c3de325be8646bc80d0c635c5 0	sources/ostree/src/libostree/ostree-blob-reader-base64.h
+100644 85c544f55ad67376d7e2b85a7a11716884cb8038 0	sources/ostree/src/libostree/ostree-blob-reader-pem.c
+100644 04efb99d5d20d8cf1891d1e3adcae70f4e2e567b 0	sources/ostree/src/libostree/ostree-blob-reader-pem.h
+100644 52b589be6590bf4c258fda9c946755e3480ab35d 0	sources/ostree/src/libostree/ostree-blob-reader-private.h
+100644 8535525436f62b6567dfac8b22e805dfbe21b6bf 0	sources/ostree/src/libostree/ostree-blob-reader-raw.c
+100644 614e26baf54bfe67b92d5357afa548ff266ca7f7 0	sources/ostree/src/libostree/ostree-blob-reader-raw.h
+100644 c839c4812ee18a9a1a94015b544d14e0f4f99d9c 0	sources/ostree/src/libostree/ostree-blob-reader.c
+100644 caf8fb24f2add047fb80d942cce5035419118cf1 0	sources/ostree/src/libostree/ostree-blob-reader.h
+100644 3a608af3a0c497c08aa0dbe174014ed0901412c2 0	sources/ostree/src/libostree/ostree-bloom-private.h
+100644 a738b74e5e989394281238c39e38ca8938ccb901 0	sources/ostree/src/libostree/ostree-bloom.c
+100644 1450fa992124e2d4af4bd5a1de5fdeaa43832a5f 0	sources/ostree/src/libostree/ostree-bootconfig-parser-private.h
+100644 4e7c823a597c86400b180076418f7f086e3bad91 0	sources/ostree/src/libostree/ostree-bootconfig-parser.c
+100644 944fb5bd21d41000353db2172b842baa5e6dc9e2 0	sources/ostree/src/libostree/ostree-bootconfig-parser.h
+100644 1a207e8d5f7f1147c170087bb561787710179884 0	sources/ostree/src/libostree/ostree-bootloader-aboot.c
+100644 e8d3d04d5b8ee4f236f0d1e933a32c2711235a98 0	sources/ostree/src/libostree/ostree-bootloader-aboot.h
+100644 f2d73d33b4c5baec5b0e5a7410883d9be18710bf 0	sources/ostree/src/libostree/ostree-bootloader-grub2.c
+100644 47a5207dbeef09c21b0f19b554bf10e9e8cb5764 0	sources/ostree/src/libostree/ostree-bootloader-grub2.h
+100644 dca0a0070fef5c4159089f260a7eee982ce2fa71 0	sources/ostree/src/libostree/ostree-bootloader-syslinux.c
+100644 24a3ee190b1397ff8508a6a04dc6089b07c362a3 0	sources/ostree/src/libostree/ostree-bootloader-syslinux.h
+100644 41280cf1982927c6f34c61aec9f696a2dca4afda 0	sources/ostree/src/libostree/ostree-bootloader-uboot.c
+100644 f79c8e5c2e44221b0b8a5e5198d7863bc75c4a09 0	sources/ostree/src/libostree/ostree-bootloader-uboot.h
+100644 8c2484a44e7416d410abd6dd73d50fb3d37d9912 0	sources/ostree/src/libostree/ostree-bootloader-zipl.c
+100644 b6056bd2a590cc09278a41c8fc64a180f33b17db 0	sources/ostree/src/libostree/ostree-bootloader-zipl.h
+100644 4fd8c4caede254fba90170ba836cd93d5da02790 0	sources/ostree/src/libostree/ostree-bootloader.c
+100644 522a93225771300f0c5ecc44661f79c0eb289542 0	sources/ostree/src/libostree/ostree-bootloader.h
+100644 63f5c1d7f654b8df6aa8130f1b2ab4f6aa57a50d 0	sources/ostree/src/libostree/ostree-chain-input-stream.c
+100644 26e8d005b96f2863b4eca75f42bbf6286c4a5d50 0	sources/ostree/src/libostree/ostree-chain-input-stream.h
+100644 f06a95d89e0a76d4c8e770f82acb008c696ad141 0	sources/ostree/src/libostree/ostree-checksum-input-stream.c
+100644 2e9543b23f3c495db15c3fb432d5b435eb47079a 0	sources/ostree/src/libostree/ostree-checksum-input-stream.h
+100644 f40d3daafd93b3855d4bf9eade60fab9be692a23 0	sources/ostree/src/libostree/ostree-cmd-private.c
+100644 9bd7c4af8fd12b3bb92afb1ddb46619d8f6edba4 0	sources/ostree/src/libostree/ostree-cmd-private.h
+100644 bbca28791d78dde1f7f3b3e14ce2eb368190b9a8 0	sources/ostree/src/libostree/ostree-content-writer.c
+100644 26a17b7ca17b765359c199c2a9b9a3f03dc2b28b 0	sources/ostree/src/libostree/ostree-content-writer.h
+100644 2996e11a554cb0f2c24785228eec6a0dc7b52f0b 0	sources/ostree/src/libostree/ostree-core-private.h
+100644 468b961d69735a964eefc0509dee8a8b3f1fe728 0	sources/ostree/src/libostree/ostree-core.c
+100644 12a1e48ab6a4d43ecf638389822c23e733e32ad7 0	sources/ostree/src/libostree/ostree-core.h
+100644 f0e24327b9e408ab0681a02668b5722af63f6405 0	sources/ostree/src/libostree/ostree-date-utils-private.h
+100644 07aecd3c239889dee27433186257648aa9738e66 0	sources/ostree/src/libostree/ostree-date-utils.c
+100644 2319ce08ac5c3c9d71464bd5e0e03bf3d9e7cdc6 0	sources/ostree/src/libostree/ostree-deployment-private.h
+100644 dc6202e4af6a5f9da392f6620fccba346088679c 0	sources/ostree/src/libostree/ostree-deployment.c
+100644 3d92fd285f951b17a7d15845cd6d1f423139ef08 0	sources/ostree/src/libostree/ostree-deployment.h
+100644 9d6a719fd8f5b5c50a1b180dc327562da7bdb7db 0	sources/ostree/src/libostree/ostree-diff.c
+100644 6a2c739943577b8945ffe428106319869803a67e 0	sources/ostree/src/libostree/ostree-diff.h
+100644 1967b48971a0ca8e23880ca00a2ff8f4b249faa6 0	sources/ostree/src/libostree/ostree-dummy-enumtypes.c
+100644 a27ea6ba8c7f730de00ac5c711c914c7a35f92dd 0	sources/ostree/src/libostree/ostree-dummy-enumtypes.h
+100644 72c646011c3295647300ec23455efe9202ecc387 0	sources/ostree/src/libostree/ostree-enumtypes.c.template
+100644 4a4028fd810dc2c4164a62d483cc3dde20c37931 0	sources/ostree/src/libostree/ostree-enumtypes.h.template
+100644 5c3bdd9a2ebd1bae77748d35c007818295465b88 0	sources/ostree/src/libostree/ostree-fetcher-curl.c
+100644 b68c4fd1246fdf333b55782b4da2816f6e68a113 0	sources/ostree/src/libostree/ostree-fetcher-soup.c
+100644 fa71b363b5ed3ef0064f8d3528c6b7d23d3ef0da 0	sources/ostree/src/libostree/ostree-fetcher-soup3.c
+100644 af300128862670a63c43f89c1c5d739112a45d88 0	sources/ostree/src/libostree/ostree-fetcher-uri.c
+100644 7ca9f07d6dfa75244e6137f5fe8732fc571a1ff6 0	sources/ostree/src/libostree/ostree-fetcher-util.c
+100644 ef5ad657a56f81dec94ea5d7caa9ca580449cb7e 0	sources/ostree/src/libostree/ostree-fetcher-util.h
+100644 52c82122f826a5d38ef7de38efb04b2335322493 0	sources/ostree/src/libostree/ostree-fetcher.h
+100644 90aa4815368137603853256ffbf2235a7236c419 0	sources/ostree/src/libostree/ostree-gpg-verifier.c
+100644 b9e54b71d61a693eba7a9fab8358143739fd259d 0	sources/ostree/src/libostree/ostree-gpg-verifier.h
+100644 e1ff846e2a0cd56f11b09fe120089a1d108d709e 0	sources/ostree/src/libostree/ostree-gpg-verify-result-dummy.c
+100644 a6b2208486bd1469847cccb5e87248df58bf21a0 0	sources/ostree/src/libostree/ostree-gpg-verify-result-private.h
+100644 4b7bd471b35ed0f49175cccbdd85f18fe08f2561 0	sources/ostree/src/libostree/ostree-gpg-verify-result.c
+100644 666dc6f32b80ec074ece2d597761176c7d9cb1ba 0	sources/ostree/src/libostree/ostree-gpg-verify-result.h
+100644 a21ff6bb29ea4af068b91eb66f7551b97e82c6da 0	sources/ostree/src/libostree/ostree-impl-system-generator.c
+100644 56fb3c80bf73f564cfc997a4df854e2e482948a2 0	sources/ostree/src/libostree/ostree-kernel-args-private.h
+100644 3b33f16100a1d87033f5bb874ebb4497e977fd94 0	sources/ostree/src/libostree/ostree-kernel-args.c
+100644 7f5569c7ba3c59336deca2a55b1afdbcfa3108c0 0	sources/ostree/src/libostree/ostree-kernel-args.h
+100644 b1c9042958fda4f355c7f255787963a2f1062f55 0	sources/ostree/src/libostree/ostree-libarchive-input-stream.c
+100644 0d906c82f5a3c123c6d2ecb43f96859c50ed3d29 0	sources/ostree/src/libostree/ostree-libarchive-input-stream.h
+100644 02cf6d57614e0634887d73ff3059157e01241614 0	sources/ostree/src/libostree/ostree-libarchive-private.h
+100644 bebd524800edaa720d5ec168b9ed35c927651bcb 0	sources/ostree/src/libostree/ostree-linuxfsutil.c
+100644 e0e07bcdcd0286f31b0b7980f2a9958f48a7d1fb 0	sources/ostree/src/libostree/ostree-linuxfsutil.h
+100644 40f642461d9344cb7783038a0d505745db452dc5 0	sources/ostree/src/libostree/ostree-lzma-common.c
+100644 ce7cf3a1fdaad7c11240087da2ac55713d36ae4c 0	sources/ostree/src/libostree/ostree-lzma-common.h
+100644 1f95cd8bf09ec5faa26e59f5a1b3694b641808ee 0	sources/ostree/src/libostree/ostree-lzma-compressor.c
+100644 bcf8457ef2e712bdcdcae6d15ed5eeeef62ed719 0	sources/ostree/src/libostree/ostree-lzma-compressor.h
+100644 bf62fc9c9e5d73e3c47b31393470eaf3e9c64dad 0	sources/ostree/src/libostree/ostree-lzma-decompressor.c
+100644 1a73df067ef320399e0d7ff557c02efb898bf3ee 0	sources/ostree/src/libostree/ostree-lzma-decompressor.h
+100644 449018e31d99bf4eeaeb7a5f09eb5fd69832ee69 0	sources/ostree/src/libostree/ostree-metalink.c
+100644 20e4643bf209de81d034f85aa53ce99c612f99e8 0	sources/ostree/src/libostree/ostree-metalink.h
+100644 29f72a90fbafd17db9ba1af6a4b99c528848fed6 0	sources/ostree/src/libostree/ostree-mutable-tree.c
+100644 4564b55bcf8c2e64e48ddcf7b23ef667bd7dc8d6 0	sources/ostree/src/libostree/ostree-mutable-tree.h
+100644 149c2915aa48c49511a454cdee98fa0912ad4c8a 0	sources/ostree/src/libostree/ostree-ref.c
+100644 30f3fd34f5e7bca1917d5c5fb59648c861f6fcdf 0	sources/ostree/src/libostree/ostree-ref.h
+100644 24ada6c707cadd7291e6a35904f82e76a1df7887 0	sources/ostree/src/libostree/ostree-remote-private.h
+100644 73d836a25145eb3140f7af0a27120515e08c1a54 0	sources/ostree/src/libostree/ostree-remote.c
+100644 2a1e7be4f90b689ac8ac960064ecce370b5bd8c1 0	sources/ostree/src/libostree/ostree-remote.h
+100644 b2e68fdad54ffa51b810e6c7437b94ef69808dfb 0	sources/ostree/src/libostree/ostree-repo-checkout.c
+100644 a634563905ccbc22c751e0e2a19460d95a406c9c 0	sources/ostree/src/libostree/ostree-repo-commit.c
+100644 7cfee38df1cb82a16429b71795917897df247cc4 0	sources/ostree/src/libostree/ostree-repo-composefs.c
+100644 8704410d4aa19c90304cd147be352884849bd218 0	sources/ostree/src/libostree/ostree-repo-deprecated.h
+100644 35dd76388f90c58294f23578933985d66f32276f 0	sources/ostree/src/libostree/ostree-repo-file-enumerator.c
+100644 e37cbf94931284feeb6593fefff0a255d8cb3531 0	sources/ostree/src/libostree/ostree-repo-file-enumerator.h
+100644 f33bc6b6a15adb1a89e689e376092346341cc562 0	sources/ostree/src/libostree/ostree-repo-file.c
+100644 77d51ff9e5b91d9f4567863c27ce4e3cfe3d39a1 0	sources/ostree/src/libostree/ostree-repo-file.h
+100644 dfa8d173f9d3d2e7d957f0589a0bd401911cf721 0	sources/ostree/src/libostree/ostree-repo-finder-avahi-parser.c
+100644 47d3a876b1fb912db07484279123ca0601c60793 0	sources/ostree/src/libostree/ostree-repo-finder-avahi-private.h
+100644 680ac0b76a1702829fbc50b48acce787362a2361 0	sources/ostree/src/libostree/ostree-repo-finder-avahi.c
+100644 cb167623c32387cba5b9c836c561fb77f5820a1b 0	sources/ostree/src/libostree/ostree-repo-finder-avahi.h
+100644 a907dc3d287f919468797e2040f2679decd0d707 0	sources/ostree/src/libostree/ostree-repo-finder-config.c
+100644 13bf9e173981af281c71ce2ab007309a8b4f291a 0	sources/ostree/src/libostree/ostree-repo-finder-config.h
+100644 3f92b278117b58dd8ceb8638a172a38978bef61b 0	sources/ostree/src/libostree/ostree-repo-finder-mount.c
+100644 532ba92fa1e557b20b57cd289fd1126c90c9d52b 0	sources/ostree/src/libostree/ostree-repo-finder-mount.h
+100644 29308a9917eedd6c44d906c6b1e98fa2bc263f35 0	sources/ostree/src/libostree/ostree-repo-finder-override.c
+100644 6241500ee044a9b37714bc232fe2e9b92a1325d9 0	sources/ostree/src/libostree/ostree-repo-finder-override.h
+100644 2f1af1c1de7e8b42f7182efb8a50e5be00fc477c 0	sources/ostree/src/libostree/ostree-repo-finder.c
+100644 5c457720c5c2d20dacdd3fe135350f991c952a1d 0	sources/ostree/src/libostree/ostree-repo-finder.h
+100644 8e050e26a99dac9a80788b8f4e742c6bea156110 0	sources/ostree/src/libostree/ostree-repo-libarchive.c
+100644 ef150c278aed775e9633ba8a7f046628571f3ae0 0	sources/ostree/src/libostree/ostree-repo-os.c
+100644 28963eeb278968dbcc5cd1280ee49e1333febdb0 0	sources/ostree/src/libostree/ostree-repo-os.h
+100644 819842f9f910001ec73d902cb3a3480e29c622f6 0	sources/ostree/src/libostree/ostree-repo-private.h
+100644 5817859997fe4a3fea9249d3655b3e9887a4d5ff 0	sources/ostree/src/libostree/ostree-repo-prune.c
+100644 a4781bf2ae3e355f384218705603d50add632ac0 0	sources/ostree/src/libostree/ostree-repo-pull-private.h
+100644 9f4d21455c13e71c16d5a91961e280f736c39d91 0	sources/ostree/src/libostree/ostree-repo-pull-verify.c
+100644 63277f2aba97b9ff526155ee3076a8c3203b5284 0	sources/ostree/src/libostree/ostree-repo-pull.c
+100644 548a1fcbb38b28d28a2a4c70c9d44d430c5bd483 0	sources/ostree/src/libostree/ostree-repo-refs.c
+100644 a98181c23375c53046c0184eabc117ca207a9fe7 0	sources/ostree/src/libostree/ostree-repo-static-delta-compilation-analysis.c
+100644 c3515cd1a2bfe0d6e1bdfd6dc733f580cbf849a8 0	sources/ostree/src/libostree/ostree-repo-static-delta-compilation.c
+100644 20adb253ec16c56428ae0c8d88c0532f9c1c3b82 0	sources/ostree/src/libostree/ostree-repo-static-delta-core.c
+100644 a6f36162d42e85763402b535373d6607db530d72 0	sources/ostree/src/libostree/ostree-repo-static-delta-private.h
+100644 5fcec2deca3a8ae3a86795e2c9e1c839c32384b8 0	sources/ostree/src/libostree/ostree-repo-static-delta-processing.c
+100644 4ceabd9969dd482198bb7abcc871c7fe1305db2e 0	sources/ostree/src/libostree/ostree-repo-traverse.c
+100644 0823fd995824d6351fc7afcee9eb72256aef9a7d 0	sources/ostree/src/libostree/ostree-repo-verity.c
+100644 487f9354421140527bc18f256fa7be3862e1c15d 0	sources/ostree/src/libostree/ostree-repo.c
+100644 c3338336c35413ce29e87f7884814700647b8c5b 0	sources/ostree/src/libostree/ostree-repo.h
+100644 e09ceb6b4a3ac969e2d1112f9d6d091f8982bb56 0	sources/ostree/src/libostree/ostree-rollsum.c
+100644 ac620f486a39bee80b91e84bfc8aa6843f202551 0	sources/ostree/src/libostree/ostree-rollsum.h
+100644 b526d867c6b5008a191b15f8d0102827ab099e1a 0	sources/ostree/src/libostree/ostree-sepolicy-private.h
+100644 6124e1491fdf3224b43e2f81f038fa5dd5f0bbd9 0	sources/ostree/src/libostree/ostree-sepolicy.c
+100644 cb175ee79077e1e3f2246dc7b3d5ddf09b4ba547 0	sources/ostree/src/libostree/ostree-sepolicy.h
+100644 f5e837607a2d45c0739b7d62e0bc6b21b8ea61b7 0	sources/ostree/src/libostree/ostree-sign-dummy.c
+100644 e55627c223703519e95ff059b68969498c4acf4a 0	sources/ostree/src/libostree/ostree-sign-dummy.h
+100644 22e0ee5a1350a8a7e037eb2d6e9b5e613c45a2a6 0	sources/ostree/src/libostree/ostree-sign-ed25519.c
+100644 89d8b54d1e1018a2a372a9f581289542957bd66f 0	sources/ostree/src/libostree/ostree-sign-ed25519.h
+100644 b14dc634092fd6d205fc7d09052476fa528942f0 0	sources/ostree/src/libostree/ostree-sign-private.h
+100644 9a268325251385d019ffff5646a552f61b6b8d9b 0	sources/ostree/src/libostree/ostree-sign-spki.c
+100644 089bd27235f204bb0fb2c568142f5884293c01ef 0	sources/ostree/src/libostree/ostree-sign-spki.h
+100644 97699f204bf6f0ea2af99e3184e930cd019e465a 0	sources/ostree/src/libostree/ostree-sign.c
+100644 a817f32ada8342a29fd6b09f4a43608eaba383e5 0	sources/ostree/src/libostree/ostree-sign.h
+100644 a015cb4db008a0a7e791cd06b4ab5c6cc0e4cb94 0	sources/ostree/src/libostree/ostree-soft-reboot.c
+100644 6d2accde81103a05f7a7a280935f6fc7af25015e 0	sources/ostree/src/libostree/ostree-sysroot-cleanup.c
+100644 94de4239e851e1a6af7afcdabb50421c86b5545e 0	sources/ostree/src/libostree/ostree-sysroot-deploy.c
+100644 f5c708726548648a7971746962e0e2bcb3c3a2c8 0	sources/ostree/src/libostree/ostree-sysroot-private.h
+100644 c991f338a055578642fc256b7d5d524fe740f73e 0	sources/ostree/src/libostree/ostree-sysroot-upgrader.c
+100644 5e2f5ed8a8e1e384b38b396841db7863f156372d 0	sources/ostree/src/libostree/ostree-sysroot-upgrader.h
+100644 5b837bb2f798256abca8a7baaacd6514bc7a0777 0	sources/ostree/src/libostree/ostree-sysroot.c
+100644 c1fb1482260a0a13879a9acb7b671e99a77e573b 0	sources/ostree/src/libostree/ostree-sysroot.h
+100644 9c3af5244b1f78b571c0d09963877b4e15d78299 0	sources/ostree/src/libostree/ostree-tls-cert-interaction-private.h
+100644 25d84ea39e835accacd912fa63b82b79c224bef0 0	sources/ostree/src/libostree/ostree-tls-cert-interaction.c
+100644 4a44db0eb7a40edc61cf9752aea02a72a73a5995 0	sources/ostree/src/libostree/ostree-types.h
+100644 fd7c81f9e107317b7a8fe80b0204c3a2fdeb99b9 0	sources/ostree/src/libostree/ostree-varint.c
+100644 4783c784e089888944f11dbe4eeb297dd0f91558 0	sources/ostree/src/libostree/ostree-varint.h
+100644 7ad07be78f1dbbfe4b7d5af0df88f000a186854e 0	sources/ostree/src/libostree/ostree-version.h.in
+100644 6c52ba0e70a4e7f87fea06b7f465dc59d0e71de0 0	sources/ostree/src/libostree/ostree.h
+100644 967a5d9f6395a0663178cd43bf278fb20f7af67a 0	sources/ostree/src/libotcore/README.md
+100644 24f173b44528a434e4c709c886d64680d192a240 0	sources/ostree/src/libotcore/otcore-ed25519-verify.c
+100644 8eaedd47a5a1df8f80b620fa2d62315e569ad9d9 0	sources/ostree/src/libotcore/otcore-prepare-root.c
+100644 3cf22f659ea5fbc7a3c21a2fd3f234425404631b 0	sources/ostree/src/libotcore/otcore-spki-verify.c
+100644 212eafe871350c390427bb92ac1f9dc1dd1be6f6 0	sources/ostree/src/libotcore/otcore.h
+100644 67b057cd2d2a3eeb496b0d290029790073019cba 0	sources/ostree/src/libotutil/.clang-format-ignore
+100644 31286a50f0722b7175538a9e6cce3e05d3afd3d0 0	sources/ostree/src/libotutil/ot-checksum-instream.c
+100644 9e3dbbfe41d97af7fb26cab9ef42d8059e8d68ae 0	sources/ostree/src/libotutil/ot-checksum-instream.h
+100644 2fe7277322aa227f02ede897edd9a628d216d7ed 0	sources/ostree/src/libotutil/ot-checksum-utils.c
+100644 3ee66ce3f0dbe77713514c0b4e31c7e57a3f27d4 0	sources/ostree/src/libotutil/ot-checksum-utils.h
+100644 aa5709ae5e441f1c52ae9b0e378a89bf9d11776b 0	sources/ostree/src/libotutil/ot-fs-utils.c
+100644 e112ccb75d0960010711a4727581d696fc3711a3 0	sources/ostree/src/libotutil/ot-fs-utils.h
+100644 3e2432a995006ea38d5e768fe49e8193eea8b127 0	sources/ostree/src/libotutil/ot-gio-utils.c
+100644 5197e1f9e31b80861a21a1951f57998a8571855f 0	sources/ostree/src/libotutil/ot-gio-utils.h
+100644 bb91a77136306662cda257ab18f4de306c7281d8 0	sources/ostree/src/libotutil/ot-gpg-utils.c
+100644 039a2f31e2522cc7a9ac2fabc39f2280c2a509ef 0	sources/ostree/src/libotutil/ot-gpg-utils.h
+100644 12f4ac0b6d0a9e1642e2cf6b57f6e184caac3a1f 0	sources/ostree/src/libotutil/ot-keyfile-utils.c
+100644 1ed6747328118acfb024cc8c33a01b4444bf937a 0	sources/ostree/src/libotutil/ot-keyfile-utils.h
+100644 73ed8b5c198c18bc9b74e4850a009fedb40ab542 0	sources/ostree/src/libotutil/ot-opt-utils.c
+100644 e6a9c3fc4cdfd51a54aa4ac12680635d4b22718e 0	sources/ostree/src/libotutil/ot-opt-utils.h
+100644 0e772c287b9361a52bf20080da38303959b71d82 0	sources/ostree/src/libotutil/ot-tool-util.c
+100644 6d0a1528574e9c13cd1d52cc128cc4a819a6d6b6 0	sources/ostree/src/libotutil/ot-tool-util.h
+100644 eee3a44f57e38ab459f40bd6768205118de1e2f8 0	sources/ostree/src/libotutil/ot-unix-utils.c
+100644 38f73e498150cf81c3db1578cc0685debb399b00 0	sources/ostree/src/libotutil/ot-unix-utils.h
+100644 68b3a3bec55df580b7f54461ce4b51a71d01911a 0	sources/ostree/src/libotutil/ot-variant-builder.c
+100644 4acda3f3bec02314ce5e6c5aadc8e61b3e7999a9 0	sources/ostree/src/libotutil/ot-variant-builder.h
+100644 a660e33845ae3ebd8318b090f6db7fbc175bb5ab 0	sources/ostree/src/libotutil/ot-variant-utils.c
+100644 cbbc302950c8750feef3985bc4ad025549f9c435 0	sources/ostree/src/libotutil/ot-variant-utils.h
+100644 27f841031a1d3a11c8c6dd544ab763eff4191670 0	sources/ostree/src/libotutil/otutil.h
+100644 44339835c999efdf0e5383bc460b1646180a3199 0	sources/ostree/src/libotutil/ul-jsonwrt.c
+100644 bddbe5edb7d53bafdd93f6bf4bdb9d619ae339bb 0	sources/ostree/src/libotutil/ul-jsonwrt.h
+100644 acd8a9200ee2dd20a06bbfda1edf74fb39342296 0	sources/ostree/src/libotutil/zbase32.c
+100644 f5d27b457079202cb02f247c1cf6fdb1dc471af9 0	sources/ostree/src/libotutil/zbase32.h
+100644 246ff735dbe2b59047c82a927cf5398abe17334c 0	sources/ostree/src/ostree/main.c
+100644 b5a52e611c613939a996b5057cbf57f02cf07ae8 0	sources/ostree/src/ostree/ostree-trivial-httpd.c
+100644 df99f8905452eb10b8d9aa129d8e71269d3e867a 0	sources/ostree/src/ostree/ot-admin-builtin-boot-complete.c
+100644 ff33830f2a43f4fed7f763f26b5613c895f70c6d 0	sources/ostree/src/ostree/ot-admin-builtin-cleanup.c
+100644 66d857241bdb747ec74572c0f9d9b5e8bedd0c4b 0	sources/ostree/src/ostree/ot-admin-builtin-deploy.c
+100644 7d96c82ec32458324288049a4a6d05e68b9b6f7f 0	sources/ostree/src/ostree/ot-admin-builtin-diff.c
+100644 1e5c2df115f822a633340cce57d1f51d19130515 0	sources/ostree/src/ostree/ot-admin-builtin-finalize-staged.c
+100644 c4d9553fadd23a5ce25f46ca75548a4922ce7dda 0	sources/ostree/src/ostree/ot-admin-builtin-impl-prepare-soft-reboot.c
+100644 5815a8373bdfa5c996d62d4293a4e0e57eb5fede 0	sources/ostree/src/ostree/ot-admin-builtin-init-fs.c
+100644 4d0711d238cef1e11d22e278c404106af17fff9a 0	sources/ostree/src/ostree/ot-admin-builtin-instutil.c
+100644 1433000e0cac7886f3a9c3a469c00a20cca98eaf 0	sources/ostree/src/ostree/ot-admin-builtin-kargs.c
+100644 e093d9528821e3453177607cb2ce63d15292da1c 0	sources/ostree/src/ostree/ot-admin-builtin-lock-finalization.c
+100644 8f16246b3d659888648b9a22733aa709e29f64ef 0	sources/ostree/src/ostree/ot-admin-builtin-os-init.c
+100644 2ed8fbb756d11de0d888502c1d411ce7e007aae7 0	sources/ostree/src/ostree/ot-admin-builtin-pin.c
+100644 67484796df9eda3838bae23d17c512ffe595f9ce 0	sources/ostree/src/ostree/ot-admin-builtin-post-copy.c
+100644 c8ccda7b74bd486091488347496439f6da008450 0	sources/ostree/src/ostree/ot-admin-builtin-prepare-soft-reboot.c
+100644 dd47ceb6c630e05e4c3a0507688f3b7f33a2caf0 0	sources/ostree/src/ostree/ot-admin-builtin-set-default.c
+100644 d014fb001499e6cf5ccc07106d204e5e929d7cbe 0	sources/ostree/src/ostree/ot-admin-builtin-set-origin.c
+100644 3c763ae05c64489fddbd5027d492a14f0e6d7599 0	sources/ostree/src/ostree/ot-admin-builtin-state-overlay.c
+100644 8c5b7e2ff8d6841b0f868bc8d68dafc41a64614a 0	sources/ostree/src/ostree/ot-admin-builtin-status.c
+100644 c8a5461227be5185246b3ecd6d0f515a8198d255 0	sources/ostree/src/ostree/ot-admin-builtin-switch.c
+100644 4ed049082102a9dd090bc54b9e405d813e9c0544 0	sources/ostree/src/ostree/ot-admin-builtin-undeploy.c
+100644 4140e4caccfaa857b08d103048648e95e3fd26c8 0	sources/ostree/src/ostree/ot-admin-builtin-unlock.c
+100644 4c9dbbedf2b0b91a9cecac6446d20babf96d346a 0	sources/ostree/src/ostree/ot-admin-builtin-upgrade.c
+100644 f873e6bd9f54ca69209065c350d23ad66cf85dfe 0	sources/ostree/src/ostree/ot-admin-builtins.h
+100644 e54fe8d96bbd068b5b72505318dc7bc680efebb8 0	sources/ostree/src/ostree/ot-admin-functions.c
+100644 6a2332b75e4a0b63b4f0222e03785e4685b6bc61 0	sources/ostree/src/ostree/ot-admin-functions.h
+100644 e5acbd7c12934ee644c342defe8b3e9889bcc4ca 0	sources/ostree/src/ostree/ot-admin-instutil-builtin-grub2-generate.c
+100644 673b40ddd231ef81d92beac044005ce7850375ce 0	sources/ostree/src/ostree/ot-admin-instutil-builtin-selinux-ensure-labeled.c
+100644 0fe4746ad9c1e3f8523503f4d0463bda54add2c9 0	sources/ostree/src/ostree/ot-admin-instutil-builtin-set-kargs.c
+100644 746809e0412de571d2275f4237ce5ae179ddfbab 0	sources/ostree/src/ostree/ot-admin-instutil-builtins.h
+100644 00025e659ef4d82218f4f574a85d150dff35f428 0	sources/ostree/src/ostree/ot-admin-kargs-builtin-edit-in-place.c
+100644 139e81d0f4e281fbedd400df46814f6294441190 0	sources/ostree/src/ostree/ot-admin-kargs-builtins.h
+100644 4df9e6908d79d52764cf3d4ed1a0dc41495e5720 0	sources/ostree/src/ostree/ot-builtin-admin.c
+100644 0e44e58b646ea0c6d3ed994dec4c0d8d9ac40128 0	sources/ostree/src/ostree/ot-builtin-cat.c
+100644 e134b44a42b3c54955ab9c58289d7a2bd060e235 0	sources/ostree/src/ostree/ot-builtin-checkout.c
+100644 6aa4ba93bdebc6d5f429f3666db8b652162da2b5 0	sources/ostree/src/ostree/ot-builtin-checksum.c
+100644 b3d42c0ab628c55f3b092ffae97fa2331b355318 0	sources/ostree/src/ostree/ot-builtin-commit.c
+100644 c269a40ef8bb5c77b2486bc5338fc43791efa5c8 0	sources/ostree/src/ostree/ot-builtin-config.c
+100644 c0a51723766632fdfa8f2c0e2c8aaf06aa009a81 0	sources/ostree/src/ostree/ot-builtin-create-usb.c
+100644 13fcd73f0e301440a7dc74224f3171256cf9935a 0	sources/ostree/src/ostree/ot-builtin-diff.c
+100644 5bc17305197846bd0e78d3fbe83dba6901bb418c 0	sources/ostree/src/ostree/ot-builtin-export.c
+100644 600f37695a76a2edac2e114a62dfb3f6552f6ad0 0	sources/ostree/src/ostree/ot-builtin-find-remotes.c
+100644 bfb73444dece75d402eab75f9f1502479744a4d9 0	sources/ostree/src/ostree/ot-builtin-fsck.c
+100644 9f7ac3b26607b38e8d2d6c09e8d21175645880e0 0	sources/ostree/src/ostree/ot-builtin-gpg-sign.c
+100644 fb3ca382d83300393351b37c59ad516fee5d39b8 0	sources/ostree/src/ostree/ot-builtin-init.c
+100644 cf0896e5ff02eed5401884d976e75715466a1cae 0	sources/ostree/src/ostree/ot-builtin-log.c
+100644 6b76bab4e0c8f47b445edd797b955bc6d65ee9f3 0	sources/ostree/src/ostree/ot-builtin-ls.c
+100644 e54eff29a3284ac8d8bc4c30de52a3a65dde69cd 0	sources/ostree/src/ostree/ot-builtin-prune.c
+100644 5be9661ce76e7c3b2c0d5348f93008402466a82d 0	sources/ostree/src/ostree/ot-builtin-pull-local.c
+100644 5133e9b67f99e469e529a797e7bfa8fbb45323eb 0	sources/ostree/src/ostree/ot-builtin-pull.c
+100644 ff89eba47fdd3adf01037f4df97bb08f86350fac 0	sources/ostree/src/ostree/ot-builtin-refs.c
+100644 8c30e4f1ed7eac4dc0c3573102b348ac6371a358 0	sources/ostree/src/ostree/ot-builtin-remote.c
+100644 126fc893026f953d72e9ad28aa91f6e4acf61b33 0	sources/ostree/src/ostree/ot-builtin-reset.c
+100644 0d20089c90df2897832b21b119e34533f7002967 0	sources/ostree/src/ostree/ot-builtin-rev-parse.c
+100644 0c1a8dbc02b8ce32d6466df122ec440a3600b0ce 0	sources/ostree/src/ostree/ot-builtin-show.c
+100644 6d89a2fbee7fd7ab507bcb5b3bd6f4b2a736f984 0	sources/ostree/src/ostree/ot-builtin-sign.c
+100644 ba91175e4553c1ef778051505aed9b302216873b 0	sources/ostree/src/ostree/ot-builtin-static-delta.c
+100644 f899d91ca7e52ae4e1615e31d09231007750b30d 0	sources/ostree/src/ostree/ot-builtin-summary.c
+100644 a7e4e8ea3b085ca94e5f577fb133aeda95d7907d 0	sources/ostree/src/ostree/ot-builtins.h
+100644 2ff2fe2e6d5eb4ed2977e48cff4dcb031f73132b 0	sources/ostree/src/ostree/ot-dump.c
+100644 8022e97c72f691d36584fc74a8843cd76a0b44db 0	sources/ostree/src/ostree/ot-dump.h
+100644 7b2e25123d5beb25b99e64d9dfa2b948c395f5a4 0	sources/ostree/src/ostree/ot-editor.c
+100644 eb65dd0e04fa0aab1fb2f8d91b102d07434e87ea 0	sources/ostree/src/ostree/ot-editor.h
+100644 794af31d6861b17ef4b653edf7a5f94ae0afaf1c 0	sources/ostree/src/ostree/ot-main.c
+100644 8df1ca8e9a47777fe464215c2e0a18b29845c511 0	sources/ostree/src/ostree/ot-main.h
+100644 a868f0fdb856835b3e44a1fa689a617fff1e1db2 0	sources/ostree/src/ostree/ot-remote-builtin-add-cookie.c
+100644 f79d8b70e4d46847016af2321955a6196416d9a0 0	sources/ostree/src/ostree/ot-remote-builtin-add.c
+100644 8af108993d8b4186fc853a72bbb5d45399f5fcb9 0	sources/ostree/src/ostree/ot-remote-builtin-delete-cookie.c
+100644 e93929fc3b7108aabd8be540f61946870e662ecf 0	sources/ostree/src/ostree/ot-remote-builtin-delete.c
+100644 d24eecbfbe186616b4c26f1085d2a3edbda1b9d1 0	sources/ostree/src/ostree/ot-remote-builtin-gpg-import.c
+100644 fa825531af2036f17ae770a7a52ccf14fc759af5 0	sources/ostree/src/ostree/ot-remote-builtin-gpg-list-keys.c
+100644 5d10df151f67575183f3052839d8f560937ad04d 0	sources/ostree/src/ostree/ot-remote-builtin-list-cookies.c
+100644 47ce1655d8238c1f94d523f671abeb7566549ccd 0	sources/ostree/src/ostree/ot-remote-builtin-list.c
+100644 efd6ea9a8a113a2e9d0a386b2e4b79de137f2c58 0	sources/ostree/src/ostree/ot-remote-builtin-refs.c
+100644 63827a05a9ebd414351128fbf9829e4f70c80a46 0	sources/ostree/src/ostree/ot-remote-builtin-show-url.c
+100644 3b507e90969ed10251634861411824088d18992a 0	sources/ostree/src/ostree/ot-remote-builtin-summary.c
+100644 88a3e31e75269b0570fcda923690995089f616bb 0	sources/ostree/src/ostree/ot-remote-builtins.h
+100644 5c926eae77b047ac7b06237988c6a997d4b5f5e8 0	sources/ostree/src/ostree/ot-remote-cookie-util.c
+100644 e0a84a1a6151c212a7039c4d5030455141bf43ff 0	sources/ostree/src/ostree/ot-remote-cookie-util.h
+100644 6973758b7c5e6d40fdd393d53c9ef8b0d819bf6f 0	sources/ostree/src/ostree/parse-datetime.h
+100644 e1ce30574b98953caa29e3cd5003319dd17957ea 0	sources/ostree/src/ostree/parse-datetime.y
+100644 17e1632c3c59ecc00288f5e88789710738c94183 0	sources/ostree/src/rofiles-fuse/Makefile-inc.am
+100644 1f18afccf9505da8da78b091b7aebb26feee2f5e 0	sources/ostree/src/rofiles-fuse/README.md
+100644 abf355e5404d4f808566e9b0d99d670662156173 0	sources/ostree/src/rofiles-fuse/main.c
+100644 eb79efdfbfb1fe2db7682df8d06c2ec764329d59 0	sources/ostree/src/switchroot/ostree-mount-util.h
+100644 9efb77d90e9e4816b68d622f94aeff7ede1c3723 0	sources/ostree/src/switchroot/ostree-prepare-root-static.c
+100644 5f2ca00492797b1be7f6c885cfab9f979fc3b5ec 0	sources/ostree/src/switchroot/ostree-prepare-root.c
+100644 f0a4b3d925bee22aaab6216346c5d37f7fcaac3b 0	sources/ostree/src/switchroot/ostree-remount.c
+100644 4fddc36381210d673c08be6f3cd92e7a15a97910 0	sources/ostree/src/switchroot/ostree-system-generator.c
+100644 64de80c144b831f0960f41f43c5f4988b1407cdc 0	sources/ostree/src/switchroot/switchroot.sh
+100644 05e58cef94399927da8d57ab7343915b53a0734d 0	sources/ostree/tests-unit-container/README.md
+100755 f57625cf4abfb98cddc1611ec0f72aaa2de80055 0	sources/ostree/tests-unit-container/run.sh
+100755 012659c076f8a4bafcc79c57ead2ae5780f8f92b 0	sources/ostree/tests-unit-container/test-prepare-root.sh
+100644 6355c8df5edeef7ae2c5fa544bebd2f192631964 0	sources/ostree/tests/.gitignore
+100644 079bd6cbcc54f89304a4d06e5d76501bb25b68f6 0	sources/ostree/tests/admin-test.sh
+100644 f6bfd5fb6f29bfb7378a80bc43fcbedc5917dfad 0	sources/ostree/tests/archive-test.sh
+100644 cec6717e4498565ccf027af48cbe870e14c83545 0	sources/ostree/tests/bare-split-xattrs-basic.tar.xz
+100644 3f31c7ce2e2b179ee867faa654e4dd983fc62ebc 0	sources/ostree/tests/basic-test.sh
+100644 b83d22266ac8aa2f8df2edef68082c789727841d 0	sources/ostree/tests/bootc-integration/.gitignore
+100644 5057910d05eb1549865b4b026c8311d84279f987 0	sources/ostree/tests/bootc-integration/Cargo.lock
+100644 3a2bf599509c96ded2e75be0240b9bb4690997f6 0	sources/ostree/tests/bootc-integration/Cargo.toml
+100644 9d309ac28ddc5b5bce940b04dd2f08b1e0bb665d 0	sources/ostree/tests/bootc-integration/bootc-e2e.md
+100644 37f2e0a1039b93a63ccb64080daa1495f4c61b70 0	sources/ostree/tests/bootc-integration/src/lib.rs
+100644 1b893bfe905d605b1a7d4ebacf425712b25454c5 0	sources/ostree/tests/bootc-integration/src/main.rs
+100644 1fd840e10e4fe4e4edb11b107f43c352d238d992 0	sources/ostree/tests/bootc-integration/src/tests/mod.rs
+100644 adc645636cd55e711a0fbccaee5486b57c6df3d3 0	sources/ostree/tests/bootc-integration/src/tests/privileged.rs
+100755 7b3a0d53f88caf16bf594baf380e6013c272da12 0	sources/ostree/tests/bootloader-entries-crosscheck.py
+100755 eb22662d88aa5cf92ec7ba93751dc728b7d0628a 0	sources/ostree/tests/coccinelle.sh
+100644 b81dada38de88c1511796eccb2cf7194eb2dea3b 0	sources/ostree/tests/coccinelle/README.md
+100644 9b63b7a5892d6763f4880aca9ef6f866ef81f7ca 0	sources/ostree/tests/coccinelle/raw-free.cocci
+100755 207bd98c21c11fb331850452c5b590a1c2bf2889 0	sources/ostree/tests/corrupt-repo-ref.js
+100644 aea6a0234dc430d0af0822493538b34f6fa34833 0	sources/ostree/tests/fah-deltadata-new.tar.xz
+100644 876873371eb13b6438f0c098920fac990abe9dcb 0	sources/ostree/tests/fah-deltadata-old.tar.xz
+100644 7e7ba31b5c8400238a124194cb1f096554149211 0	sources/ostree/tests/get-byte-order.c
+100644 7ac6ed872ee08a918602384430649202e62d9fa7 0	sources/ostree/tests/glib.supp
+100644 9ca475813a0b0d9fd6467d728701b9aa60e92aa1 0	sources/ostree/tests/gpg-verify-data/README.md
+100644 55cd4bb28c1958d94c318fd13fe479f603fd1df3 0	sources/ostree/tests/gpg-verify-data/gpg.conf
+100644 5bc8fb2c8f757e34a0d8f4644f589d57609e213f 0	sources/ostree/tests/gpg-verify-data/lgpl2
+100644 4229b814f7565fdef945d1f92e3123e95cd9f5df 0	sources/ostree/tests/gpg-verify-data/lgpl2.sig
+100644 375c650ad95a3d4f442022fbf9a6f73b141f3b24 0	sources/ostree/tests/gpg-verify-data/lgpl2.sig0
+100644 83a6227c9b4d771c4a3bfd81ef2d6551248e79cd 0	sources/ostree/tests/gpg-verify-data/lgpl2.sig1
+100644 ad0f420c2f11c94485c4a9c35b9e773002e17895 0	sources/ostree/tests/gpg-verify-data/lgpl2.sig2
+100644 5c17ec6f14d506664bffbde4b3457ac625285ef5 0	sources/ostree/tests/gpg-verify-data/lgpl2.sig3
+100644 2d3989f6268ae655fb947d00cd14b74aa5c839a8 0	sources/ostree/tests/gpg-verify-data/lgpl2.sig4
+100644 2c9e5b6a1a7b8af58353c293534ca5d92c601003 0	sources/ostree/tests/gpg-verify-data/pubring.gpg
+100644 38e7f1c1c572835e4437b33d93530b463fe9d500 0	sources/ostree/tests/gpg-verify-data/secring.gpg
+100644 91f87170b0afbdbca5570ab736cce423a2e11e0e 0	sources/ostree/tests/gpg-verify-data/trustdb.gpg
+100644 17113b5de4a3fcf54f2a61df57e854ab6b7230c5 0	sources/ostree/tests/gpghome/key1.asc
+100644 3338329b006467d1bfaf8ec0a3e71c4126a72331 0	sources/ostree/tests/gpghome/key2.asc
+100644 2ebdb6d3efc0fa916e3896cf77e422976a3a3b27 0	sources/ostree/tests/gpghome/key3.asc
+120000 3ada1d4237d8c594abce488e511d6af58837edf8 0	sources/ostree/tests/gpghome/pubring.gpg
+100644 b918151e1e8a78c50d86992b57bd1c2636aa0223 0	sources/ostree/tests/gpghome/revocations/key1.rev
+100644 9b8960a2a9ac24ecea3e3f34c86b262937410680 0	sources/ostree/tests/gpghome/revocations/key2.rev
+100644 66e238a1eedabb683174daed11f870c7649494ac 0	sources/ostree/tests/gpghome/revocations/key3.rev
+100644 ad88437ec50b7bfeed4a9d5484414d446905deb1 0	sources/ostree/tests/gpghome/secring.gpg
+100644 d5f053e76d560ed2b383364e92cd27b4f86e2cee 0	sources/ostree/tests/gpghome/trustdb.gpg
+100644 5461d9d4a39fda1da4cde504e6b43574d9fdafbb 0	sources/ostree/tests/gpghome/trusted/pubring.gpg
+100644 9b11639f4f70d664f922965cbc437ff4264a88fb 0	sources/ostree/tests/grub2-entries-crosscheck.py
+100644 1e7caa9ea89a3016bc73f03b5e4c167711a21374 0	sources/ostree/tests/inst/.gitignore
+100644 ff030b221558dfa109460d9e111f4310a70965c8 0	sources/ostree/tests/inst/Cargo.toml
+100644 d4fadd759a734cebb89787a8e25d19df66351a85 0	sources/ostree/tests/inst/src/composefs.rs
+100644 2668cf2e0c0b1cbc37372b5829d17a057d3ba45b 0	sources/ostree/tests/inst/src/destructive.rs
+100644 1613385cd527f6381745649ba82f80d5813c09a3 0	sources/ostree/tests/inst/src/insttestmain.rs
+100644 af2096f2e4539aa7d9da2a7218f20473abef93bd 0	sources/ostree/tests/inst/src/repobin.rs
+100644 9f68f15f9263c4e3597d62f6627e02357c3d8e08 0	sources/ostree/tests/inst/src/sysroot.rs
+100644 9eafc5613238c6c2b8baf6c2dc31c04713126491 0	sources/ostree/tests/inst/src/test.rs
+100644 a8f7dc71a82c99d39b98ea7f601a6754b98a4880 0	sources/ostree/tests/inst/src/treegen.rs
+100644 97b5dac6d4d18c90cc4259ad8c398b1dc8c87336 0	sources/ostree/tests/kolainst/.gitignore
+100644 b2172ccbf6058330126dc1caabf710ec648670f1 0	sources/ostree/tests/kolainst/Makefile
+100644 19cd5528550dd0eafb730186a3ab2f4dbf9fad0e 0	sources/ostree/tests/kolainst/README.md
+100644 0e35f2ce13af99050b9f38d3b094babb2fcb6a5e 0	sources/ostree/tests/kolainst/data-shared/libinsttest.sh
+100644 3465fb9ba0de44310a7664ebb7a397e64f71236c 0	sources/ostree/tests/kolainst/data-shared/libtest-core.sh
+100644 7a4552fee525360ccdceba4e8529969006fcec8e 0	sources/ostree/tests/kolainst/destructive-stamp.ign
+100755 418dd844da3d4fe435e5048a55f6e046efe99a88 0	sources/ostree/tests/kolainst/destructive/auto-prune.sh
+100644 6d14cc04cd0083b22d45f198ccff91a1b40b5fcf 0	sources/ostree/tests/kolainst/destructive/basic-misc.sh
+100755 29c72efd6dffee7bcafb14899235a7dff5c35db2 0	sources/ostree/tests/kolainst/destructive/boot-automount.sh
+120000 8bd12e7409fc24082a5a0e1d45dd932526befd7d 0	sources/ostree/tests/kolainst/destructive/data
+100755 3aeefffec02ae4c1f22c51d68280e182725b602a 0	sources/ostree/tests/kolainst/destructive/deployment-lint
+100755 e0f0e9076010aad9abae4cbc23a675dccf8e7f8e 0	sources/ostree/tests/kolainst/destructive/finalization.sh
+100755 71cd1b2b3272e7b50387dcf0a4708f8f518df101 0	sources/ostree/tests/kolainst/destructive/itest-bare-root.sh
+100755 004aa9c9175761c79df373c5ebedfc684723d7b5 0	sources/ostree/tests/kolainst/destructive/itest-deploy-selinux.sh
+100755 ec242517d6d9cbbc983e19cf89313cd274a2e307 0	sources/ostree/tests/kolainst/destructive/itest-label-selinux.sh
+100755 66b78aa16698acb465ce85908858812d33a5bfb4 0	sources/ostree/tests/kolainst/destructive/kargs-edit-in-place.sh
+100755 7ee28561988d29a0fa2c9ca5975c8840a2fccab8 0	sources/ostree/tests/kolainst/destructive/kargs-proc-cmdline-quoted.sh
+100755 981a04b768650523071ba3bd9a8254cbcd0b1f04 0	sources/ostree/tests/kolainst/destructive/mount-propagation.sh
+100755 b2c0880f4bf53b4b64fccf0db4b0b82400c0ff0c 0	sources/ostree/tests/kolainst/destructive/overlay-initrds.sh
+100755 7a8ab54a92c16d19376dc34a2287cfdd1c564d2d 0	sources/ostree/tests/kolainst/destructive/root-transient-ro.sh
+100755 ba1c5c5e52f3c718e77bfdf8f6fb24b7f4fd6063 0	sources/ostree/tests/kolainst/destructive/soft-reboot.sh
+100755 12cf9d01253a0afe86ebffc045fdcd6d046ebc89 0	sources/ostree/tests/kolainst/destructive/staged-delay.sh
+100755 5c54d121cc1dc6f548c9dcf3de47a2cf2734bba5 0	sources/ostree/tests/kolainst/destructive/staged-deploy.sh
+100755 4442611e9fb46796f385ce959ccb411dbbdc70ea 0	sources/ostree/tests/kolainst/destructive/state-overlay.sh
+100755 6e8a28eb814c664d1103c2d49db49add82f1acfb 0	sources/ostree/tests/kolainst/destructive/unlock-transient.sh
+100755 ff615f880cc02252818178de0d130a3fd6997332 0	sources/ostree/tests/kolainst/destructive/var-mount.sh
+100755 4fbb05c63632c7553cdb88bf3e1b91d7e92baed8 0	sources/ostree/tests/kolainst/install-wrappers.sh
+120000 8bd12e7409fc24082a5a0e1d45dd932526befd7d 0	sources/ostree/tests/kolainst/nondestructive/data
+100755 eb6af64d15dc1a134296a17abf2789b96c5c13c2 0	sources/ostree/tests/kolainst/nondestructive/itest-alt-sysroot.sh
+100644 d399d78d2dd9c53a2ed8bb7eb380a8634996e91c 0	sources/ostree/tests/kolainst/nondestructive/itest-bare-unit.sh
+100755 ad3d2dacd39f44137ec3227b4bc3d23be988f063 0	sources/ostree/tests/kolainst/nondestructive/itest-bare-user-root.sh
+100755 14899f71e6b1d5ba3842e2a263b42b1b5fe2438f 0	sources/ostree/tests/kolainst/nondestructive/itest-payload-link.sh
+100755 6c6404e4ec39b31dfeb78f2600f2b697598d096a 0	sources/ostree/tests/kolainst/nondestructive/itest-pull-space.sh
+100755 38c4d7c6007dae791cb170c082273cf359815c09 0	sources/ostree/tests/kolainst/nondestructive/itest-pull.sh
+100755 73ae092bfca26f4968512bd7ac4f205e6e51edf9 0	sources/ostree/tests/kolainst/nondestructive/itest-remotes.sh
+120000 bd5f8277b81db02662d2c66503a43e6f5ea55da6 0	sources/ostree/tests/kolainst/nondestructive/libtest-core.sh
+100644 075456a20b3724f6e3073bde9e019dfce4bbaaac 0	sources/ostree/tests/libostreetest.c
+100644 e2a077a7ad805dacd00a230bb12479a7a5011519 0	sources/ostree/tests/libostreetest.h
+120000 9bb1d3f115769b3b50a66b3f56e5401b6c221b2e 0	sources/ostree/tests/libtest-core.sh
+100755 24125b2fe106ac75f60fb337639981fcc624d856 0	sources/ostree/tests/libtest.sh
+100755 c781ae2849bdd4dee39a377c1b649b4dbf4afaa6 0	sources/ostree/tests/makecheck.py
+120000 587281cdc6d035f3b59c6c1b5de43b4301fddbe6 0	sources/ostree/tests/ostree-grub-generator
+100644 9dec3b73c76a149d34db24015d4da5918dd96558 0	sources/ostree/tests/ostree-path-traverse.tar.gz
+100644 b81ea51ba80806bcc1e04f73f8e11f2171d1c472 0	sources/ostree/tests/ostree.supp
+100644 05e51d6933fde7853bc773e50e8dedb73a00842e 0	sources/ostree/tests/pre-endian-deltas-repo-big.tar.xz
+100644 ef05045c0444ac4c5c04c1230dc13fe00f5623c5 0	sources/ostree/tests/pre-endian-deltas-repo-little.tar.xz
+100644 53a6019abe143c497b27519406b328f0d8343505 0	sources/ostree/tests/pre-signed-pull-data.tar.gz
+100644 d61735a0e93d687bf5bbb314b0fe426471185d82 0	sources/ostree/tests/pull-test.sh
+100644 a5e4aa048f6b7d2ffc74fe4bc2c3340c418b09eb 0	sources/ostree/tests/pull-test2.sh
+100644 68a0e3deefe275b683d7d756dc1852c1ab2aa6a1 0	sources/ostree/tests/repo-finder-mount.c
+100755 e9f9842bcc385606017f3095ad796fcff25fcfb2 0	sources/ostree/tests/run-installed
+100755 570d7521c0d6383241c358283c777ca918a68b3d 0	sources/ostree/tests/runkola
+100755 b5e5c1a7e5288708424e89daee595c71bb19a13c 0	sources/ostree/tests/test-admin-boot-counting-tries.sh
+100755 97cd0fd64db6c2b4ad4d6f591c55b6bd629a1945 0	sources/ostree/tests/test-admin-deploy-2.sh
+100755 9fda9d46951abcb83ddd961596f1c2ce5dc355f8 0	sources/ostree/tests/test-admin-deploy-bootid-gc.sh
+100755 712855dae988bf3d2685c354137477bf8b5a2cdc 0	sources/ostree/tests/test-admin-deploy-bootprefix.sh
+100755 5c6c0413971afe7b0eddfb20230faeadad9aeec6 0	sources/ostree/tests/test-admin-deploy-clean.sh
+100755 950e8da0a98fce1968f518d79d126734afdc2146 0	sources/ostree/tests/test-admin-deploy-composefs.sh
+100755 8c96207b895f4058432390e0f5e6b8aea3637f95 0	sources/ostree/tests/test-admin-deploy-emptyetc.sh
+100755 6387dfabeb0a9a4e25b6e9c0a49ce0277b23799f 0	sources/ostree/tests/test-admin-deploy-etcmerge-cornercases.sh
+100755 e552cb2048fad29037d7a229db19cc65b3587f02 0	sources/ostree/tests/test-admin-deploy-grub2.sh
+100755 89d613f8badada20c2676a692393fc9e911bfc21 0	sources/ostree/tests/test-admin-deploy-karg.sh
+100755 bac5ee46999eb69f89bf0e4a5c32471e4f95da40 0	sources/ostree/tests/test-admin-deploy-nomerge.sh
+100755 ad79e253fb31b95374bbd79a7ea5df5b8e6e07b4 0	sources/ostree/tests/test-admin-deploy-none.sh
+100755 ccbe5b7089a6e1000e5033388d0054db3e84a453 0	sources/ostree/tests/test-admin-deploy-switch.sh
+100755 3db219893c2d31397ca2be8ffa9ad1cf1b474bf0 0	sources/ostree/tests/test-admin-deploy-syslinux.sh
+100755 9a4d773b37e3e4b1557e8d0ba0cb573024f82cd1 0	sources/ostree/tests/test-admin-deploy-uboot.sh
+100755 fc61576fab3e4ba6228f7b076d8778de432359d0 0	sources/ostree/tests/test-admin-deploy-var.sh
+100755 664219495a1f2076854527f094545e64facd615d 0	sources/ostree/tests/test-admin-deploy-whiteouts.sh
+100755 6283b126bd41807946616848ed9cc47acc1873e9 0	sources/ostree/tests/test-admin-gpg.sh
+100755 27fd1ebc1846dce286af5e5a20911f9ae5d060b4 0	sources/ostree/tests/test-admin-instutil-set-kargs.sh
+100755 8211c256e9b05f6348c9aaedae3cebfe494dc28e 0	sources/ostree/tests/test-admin-kargs.sh
+100755 5a4b7bfd2bb8fb19260356ebff7d657a49b1d591 0	sources/ostree/tests/test-admin-locking.sh
+100755 33905c3f745ab9f66abf53eca6bb135b52326d40 0	sources/ostree/tests/test-admin-pull-deploy-commit.sh
+100755 ebe303837f6350704576f1d472cdc23b40a77d12 0	sources/ostree/tests/test-admin-pull-deploy-split.sh
+100755 ee746fc8193eadf6d81ae214456382056a1fb3bb 0	sources/ostree/tests/test-admin-stateroot.sh
+100755 5336ea1492d6c8711ae6e4e54947a8bf42518b59 0	sources/ostree/tests/test-admin-upgrade-endoflife.sh
+100755 faf140cdc72fdf04459918f620c20a3eedf3add9 0	sources/ostree/tests/test-admin-upgrade-not-backwards.sh
+100755 6e3aec39dd2cf99c7fcbdd4254ffb811d8e6da82 0	sources/ostree/tests/test-admin-upgrade-systemd-update.sh
+100755 b7b3e8b76b8f24fba92baed5d6d90e3abcdc67ba 0	sources/ostree/tests/test-admin-upgrade-unconfigured.sh
+100755 e001bc2af532bb3d9766b496b9b7db029579a6ec 0	sources/ostree/tests/test-archivez.sh
+100755 22680767d26ae8649e1b47ca085e093fb68c6fe8 0	sources/ostree/tests/test-auto-summary.sh
+100755 e2ee076e3d2d08fe484e69430edeb63d687f3cc6 0	sources/ostree/tests/test-backcompat-fsck.sh
+100755 b30e9d6d14b6de9d03c53a5c48ff1d64b4b44aed 0	sources/ostree/tests/test-basic-bare-split-xattrs.sh
+100644 81397f675cf1b7afdf38dd026a6c688ba946a143 0	sources/ostree/tests/test-basic-c.c
+100755 0bbc6c23b650914396c06e5151c2b91334f0c65c 0	sources/ostree/tests/test-basic-root.sh
+100755 f6e8606debe1936aaa736b5b1f92f21b4233119f 0	sources/ostree/tests/test-basic-user-only.sh
+100755 22e9f40dd2cd682277983f5c9c4d57b458f06a82 0	sources/ostree/tests/test-basic-user.sh
+100755 c7dafe112bb505c31ae849398f2cade0d5099374 0	sources/ostree/tests/test-basic.sh
+100644 93f46ebf61d47a5ad67cf9587f6b24d66ce9b048 0	sources/ostree/tests/test-bloom.c
+100644 d84c4a3be0eb07429e02c49f5a0533679a9de6dc 0	sources/ostree/tests/test-bootconfig-parser-internals.c
+100644 88c40e8cbde1ab2a6ff097258c745ecc979a3295 0	sources/ostree/tests/test-bsdiff.c
+100644 fabd029aa967038ae729fde96bdee5b4f7317868 0	sources/ostree/tests/test-checksum.c
+100755 edce0c9d160f7012965b2c4855a04866672bd3d3 0	sources/ostree/tests/test-cli-extensions.sh
+100644 3469471d9ecca1cc9f162cd29c6943607728027c 0	sources/ostree/tests/test-commit-sign-sh-ext.c
+100755 8e1ba615063263a439ba8529e0fe06d9dc9d4a23 0	sources/ostree/tests/test-commit-sign.sh
+100755 de105b768a9c8a41f32dc4f4765a487c1a3fb0dd 0	sources/ostree/tests/test-commit-timestamp.sh
+100755 72f81284ec35536f1dcb11554a3fbf67a75e22d9 0	sources/ostree/tests/test-composefs.sh
+100755 7efb5bdaf93c18ceca5d4c51af89bc999c8a7c4a 0	sources/ostree/tests/test-concurrency.py
+100755 d4a35b4caa3a31b47be6def95db529d88712be28 0	sources/ostree/tests/test-config.sh
+100755 ddc7f3445180100c5ec3cfa763220a293553a738 0	sources/ostree/tests/test-core.js
+100755 055870d1f3aa6c465aaa8f6441ae18b752bfc425 0	sources/ostree/tests/test-corruption.sh
+100755 064501fef76b4c2d7278e7ac9a91156a5c117d73 0	sources/ostree/tests/test-create-usb.sh
+100755 9cd22286f72fcf9fd2a221f30233274dcd1f7f4a 0	sources/ostree/tests/test-delta-ed25519.sh
+100755 c6e9e57ca6041e9d9b9ddfb0b2034b26ba7a9d19 0	sources/ostree/tests/test-delta-sign.sh
+100755 4c9e2e2d89cda27b7e42cba7fd6d35a2764e68f9 0	sources/ostree/tests/test-delta.sh
+100755 2dc78dc30d9543348826ae1be278467953d3b423 0	sources/ostree/tests/test-demo-buildsystem.sh
+100755 23e51666d09869b4b065f9bd840a38d521d770d0 0	sources/ostree/tests/test-export.sh
+100755 3ec81f91c5b9c90b2b4a95010736a6594104c103 0	sources/ostree/tests/test-find-remotes.sh
+100755 3dbcdd23c3b65077d8c4331c89652283f01b7ec5 0	sources/ostree/tests/test-fsck-collections.sh
+100755 4795d7fbb83f910aa713c1322906380ad9195ef3 0	sources/ostree/tests/test-fsck-delete.sh
+100755 d3b543327231353aba52097355325e7d6b6cd687 0	sources/ostree/tests/test-gpg-signed-commit.sh
+100644 bfa3759659124e94ae76e5863109268c41dbd43a 0	sources/ostree/tests/test-gpg-verify-result.c
+100755 5c08235b106998ff7743e30e03958c8d5d1e9992 0	sources/ostree/tests/test-help.sh
+100644 45b2c0550e343381fd305f85c24d56c61a4703ee 0	sources/ostree/tests/test-include-ostree-h.c
+100755 54224dcf96b85225130586332002dd2d82fb9a16 0	sources/ostree/tests/test-init-collections.sh
+100644 3573657ec41e997193ffa7a0c891075794d741a2 0	sources/ostree/tests/test-kargs.c
+100644 748e029af0a2a858d5a97c900284255fde26eb45 0	sources/ostree/tests/test-keyfile-utils.c
+100644 d7524821083ec1f9ce679561b0f058880adb0462 0	sources/ostree/tests/test-libarchive-import.c
+100755 09b46514c8e6b597620bb026561ee3303086f3d2 0	sources/ostree/tests/test-libarchive.sh
+100755 f81eabfa8feabb9c4cd6f500df4cf05124e6285f 0	sources/ostree/tests/test-local-pull-depth.sh
+100755 e1b916c4ecf2b95f429b0ea51a3f898033bfe274 0	sources/ostree/tests/test-local-pull.sh
+100644 7ca3898a0692ef0ebc043bf200d6a5cb251727ff 0	sources/ostree/tests/test-lzma.c
+100644 94682f2ca1da046036f561b823a3052a9458e1b6 0	sources/ostree/tests/test-mock-gio.c
+100644 784c7a9538bb2b2c4431abc69b7f98a1e623c769 0	sources/ostree/tests/test-mock-gio.h
+100644 4ef35930127032b5a3b253798d96610e9fbc0a30 0	sources/ostree/tests/test-mutable-tree.c
+100755 bd25b688110dd3843c1d1a0ea38380084dee945d 0	sources/ostree/tests/test-no-initramfs.sh
+100755 d791c62235ca3625657dea2629cf6829eb595670 0	sources/ostree/tests/test-oldstyle-partial.sh
+100755 8549f966ead0341e4884806fc120e8d270ccaed4 0	sources/ostree/tests/test-osupdate-dtb.sh
+100644 3a700f4d6c0b1148645eab895f27dc6a79b687c2 0	sources/ostree/tests/test-ot-opt-utils.c
+100644 f189b3c6e1f323fdfc61cbc8a69e7db40da04746 0	sources/ostree/tests/test-ot-tool-util.c
+100644 659b5c2d84436758735e69c13c6cd08670ec8880 0	sources/ostree/tests/test-ot-unix-utils.c
+100644 2d8003e5af184de694f54ee60df1bebfdcfd3a87 0	sources/ostree/tests/test-otcore.c
+100755 5a8809f8650a511e801a40470c00c6708103444e 0	sources/ostree/tests/test-parent.sh
+100755 14b86a62458e4b7f614fa84e184fd12e95a47fd6 0	sources/ostree/tests/test-payload-link.sh
+100644 ed0f82d0376deb761d718feb3e235c9ec78e71df 0	sources/ostree/tests/test-pem.c
+100755 0ac8e0aa1fa80329b7efc77cc37e92c3a1377ea5 0	sources/ostree/tests/test-pre-signed-pull.sh
+100755 c5bb2704fdb2118372d5a97c614e35cf09293292 0	sources/ostree/tests/test-prune-collections.sh
+100755 0e628405d59fca8ef1aa5b6bbb682bba66225575 0	sources/ostree/tests/test-prune.sh
+100755 f049362849ab8a6852bb32bed8b190dd8832137c 0	sources/ostree/tests/test-pull-bare.sh
+100755 033693f520eccb173c0b5911ef8982ebbd9bb80f 0	sources/ostree/tests/test-pull-bareuser.sh
+100755 677ad4c2282ae1ba158ec1ba4c014c72b09468e7 0	sources/ostree/tests/test-pull-bareuseronly.sh
+100755 bef916af39364048917e6f7f228d6cc982ea424b 0	sources/ostree/tests/test-pull-basicauth.sh
+100644 605c636354f84db6c31ad609cb0b01efeb72436b 0	sources/ostree/tests/test-pull-c.c
+100755 518545d75d6a68b98bd1bd3ef13ffee88d23c4c2 0	sources/ostree/tests/test-pull-collections.sh
+100755 2f162225f6ce96332a1b47910783278871eea6ec 0	sources/ostree/tests/test-pull-commit-only.sh
+100755 63eecf720930bbf90983b4693b030384db97b7f8 0	sources/ostree/tests/test-pull-contenturl.sh
+100755 66963d0c9d36209c621f880f99b8f6bbc7c87520 0	sources/ostree/tests/test-pull-corruption.sh
+100755 6f33034988878b71fcce780ed6f37e4f0a0ca3ed 0	sources/ostree/tests/test-pull-depth.sh
+100755 0768638da66ad6f9e13db2bb13afabe9158eefe1 0	sources/ostree/tests/test-pull-large-metadata.sh
+100755 f4ebdd75ae7a88077cb671479b0e77460cf11f42 0	sources/ostree/tests/test-pull-localcache.sh
+100755 22e5d59c910d80ffcd0b4e15ea519e595da540ca 0	sources/ostree/tests/test-pull-metalink.sh
+100755 88a37b8a79180fae1ccd46a6da3c9ead7146a251 0	sources/ostree/tests/test-pull-mirror-summary.sh
+100755 d04d1e48d969e8361f562c8494c2aff0cf2a0b18 0	sources/ostree/tests/test-pull-mirrorlist.sh
+100755 4e8ed03538e209108df129609d9e9995dbe5d34f 0	sources/ostree/tests/test-pull-override-url.sh
+100755 51113b6601399a6021145d262db5f570771a4004 0	sources/ostree/tests/test-pull-repeated.sh
+100755 ec8a3bf412e37c4da3af07c97b1027973e23f132 0	sources/ostree/tests/test-pull-resume.sh
+100755 95d1aadf7a96e589b249e87b08dd9995583dbaf3 0	sources/ostree/tests/test-pull-sizes.sh
+100755 9408a974f136fc46b7f33506c41dc57fc22355bd 0	sources/ostree/tests/test-pull-subpath.sh
+100755 180f671cdd9c1c9d4e48d01336f047917e31fbe5 0	sources/ostree/tests/test-pull-summary-caching.sh
+100755 0a71b2b3c549530add327aa88be2ee5dc64a1a6c 0	sources/ostree/tests/test-pull-summary-sigs.sh
+100755 a9826e867d8c1e1d99634848abe3d98805360067 0	sources/ostree/tests/test-pull-untrusted.sh
+100755 fd82b68d1c1145d78fa722f1e17527f735d49a35 0	sources/ostree/tests/test-pull2-bareuseronly.sh
+100755 8bdc50d7652b563ab66dd48e87aa8c02fe82e90a 0	sources/ostree/tests/test-refs-collections.sh
+100755 53b36f6bbcc7cd8b30c73d7eb6cc67afab4d4d7a 0	sources/ostree/tests/test-refs.sh
+100755 5d383fa30fe28e1fdb45a35bd1e7efaa07571230 0	sources/ostree/tests/test-remote-add-collections.sh
+100755 2f5ea63418bdeb94fa36098a985677ef540f6323 0	sources/ostree/tests/test-remote-add.sh
+100755 b9b95a1f1ca3f19055d762b8ac8fe6be7483adbc 0	sources/ostree/tests/test-remote-cookies.sh
+100755 69e342cf6849286ef62bcb03ba4776a112345b00 0	sources/ostree/tests/test-remote-gpg-import.sh
+100755 de24bf4da2a6eecac2b44aa4a5f6196f43a4d744 0	sources/ostree/tests/test-remote-gpg-list-keys.sh
+100755 9648ef8c34590b588d4f074cbee4a719697ab4bb 0	sources/ostree/tests/test-remote-headers.sh
+100755 b92fb20e4ec3a354a6a3a46fdd8ea203c0b3f472 0	sources/ostree/tests/test-remote-refs.sh
+100755 afde0d67f96121756781e926fa8e5857f63b6ea9 0	sources/ostree/tests/test-remotes-config-dir.js
+100644 a187b2f0a1a28ac7f43876a6a847307c3d774b57 0	sources/ostree/tests/test-repo-finder-avahi.c
+100644 4b08b2eba93ff1c77fb35b42f3b9e3d65c1fb574 0	sources/ostree/tests/test-repo-finder-config.c
+100755 b1a8d422aed4e8d932ac30c3b44a111e9f2d1ea7 0	sources/ostree/tests/test-repo-finder-mount-integration.sh
+100644 0bbcd844936b8ffcd87fca57e8fde111e6f75b02 0	sources/ostree/tests/test-repo-finder-mount.c
+100644 0519f1cc1749dfe0076d6cb6d468f5fbbf37654f 0	sources/ostree/tests/test-repo.c
+100755 e31ac15e8f6b9d5fcecba93196b48469799ee957 0	sources/ostree/tests/test-reset-nonlinear.sh
+100644 a47bca819a16160893bd2b859d51e82847c652dc 0	sources/ostree/tests/test-rfc2616-dates.c
+100755 b47bb36762ff7a0756f0e9984737f68b528e520f 0	sources/ostree/tests/test-rofiles-fuse.sh
+100644 f906e9911a80137ce6e2a3e958e0c8df94bff90c 0	sources/ostree/tests/test-rollsum-cli.c
+100644 a454e626b50f7dc939cf37b66fa594054d05b52b 0	sources/ostree/tests/test-rollsum.c
+100755 305af38bf59f9839928319accbe95b173d09659d 0	sources/ostree/tests/test-signed-commit-dummy.sh
+100755 5408ca957a65f1d8011838c473e6505a1242bef2 0	sources/ostree/tests/test-signed-commit-ed25519.sh
+100755 68b84f18f5f7bd6bac56f003669a968ba4039f86 0	sources/ostree/tests/test-signed-commit-spki.sh
+100755 0bbe0b162a78b3ced03be7a74ce6f35ab511d197 0	sources/ostree/tests/test-signed-pull-summary.sh
+100755 a08d3fbf77a92e02b13d63cd48a11b10e4e516f7 0	sources/ostree/tests/test-signed-pull.sh
+100755 b778b53bcb535759e3c065b2a02f8fab4e73af9c 0	sources/ostree/tests/test-sizes.js
+100755 f6089eed1f35e32c988e808e36635d231639b5f4 0	sources/ostree/tests/test-summary-collections.sh
+100755 643502cdfdf9713364ee3d99fb16fad7cab73653 0	sources/ostree/tests/test-summary-update.sh
+100755 4e149ddbbfdcf37bb45e2b4fc8313345613df63f 0	sources/ostree/tests/test-summary-view.sh
+100755 3e5a28cb07ed373f100712ad6d32d101d300f390 0	sources/ostree/tests/test-symbols.sh
+100644 34e861629b2d8b6a963d0c1837b58827b2b23678 0	sources/ostree/tests/test-sysroot-c.c
+100755 d4f67ef4b3b25feb631989e0cfa58ef9054f42cd 0	sources/ostree/tests/test-sysroot.js
+100644 9f84e6bfecf1469986a9ed4089558af79562d7ef 0	sources/ostree/tests/test-validate-utf8.c
+100644 9c42f64eae75a3f56b6949d3bb65cf72a5e3fa5c 0	sources/ostree/tests/test-varint.c
+100755 10485a80ad5c5453b1cc1054f45d0bc858ae4e1f 0	sources/ostree/tests/test-xattrs.sh
+100755 95a083eebd957b8845a19c34e997b223ecaea715 0	sources/ostree/tests/webserver.py
+100644 b83d22266ac8aa2f8df2edef68082c789727841d 0	sources/ostree/tests/xtask/.gitignore
+100644 89bf647ed4168fe0c74278c4a93557918a6b7565 0	sources/ostree/tests/xtask/Cargo.lock
+100644 79569d45d6a972758beb983c0a12bfea68d0980d 0	sources/ostree/tests/xtask/Cargo.toml
+100644 738419614fbab798db4b593b42ab3c39cbef49ae 0	sources/ostree/tests/xtask/src/main.rs
+100644 54fc9eeea221ff13e20b15e4602afb204cfb027b 0	sources/ostree/tests/xtask/src/tmt.rs
+100644 e15eb8593380240b86382690c461150faeabecd2 0	sources/ostree/tmt/plans/integration.fmf
+100644 c3e94140b3d27deb9112d6b2ca47d7abae132f55 0	sources/ostree/tmt/tests/tests.fmf
+
+===== SUBMODULE STATUS =====
+
+===== SUBMODULE CONFIGURATION =====
+[submodule "sources/ostree"]
+	path = sources/ostree
+	url = https://github.com/ostreedev/ostree.git
+[submodule "sources/rpm-ostree"]
+	path = sources/rpm-ostree
+	url = https://github.com/coreos/rpm-ostree.git
+
+===== RPM-OSTREE REFERENCES =====
+./docs/inheritance.md
+7:- Source reference trees: sources/ (bootc, ostree, rpm-ostree, selinux-*, …)
+
+./.gitmodules
+4:[submodule "sources/rpm-ostree"]
+5:	path = sources/rpm-ostree
+6:	url = https://github.com/coreos/rpm-ostree.git
+
+./sources/ostree/README.md
+54:Fedora derivatives use rpm-ostree (noted below):
+63:uses rpm-ostree as well.
+115:[rpm-ostree](https://github.com/projectatomic/rpm-ostree) is used by the
+
+./sources/bootc/Cargo.toml
+69:# For the same rationale as https://github.com/coreos/rpm-ostree/commit/27f3f4b77a15f6026f7e1da260408d42ccb657b3
+
+./sources/README.md
+10:| rpm-ostree | https://github.com/coreos/rpm-ostree |
+
+./sources/bootc/ADOPTERS.md
+23:to [rpm-ostree](https://github.com/coreos/rpm-ostree/) which has existed a really long time.
+
+./sources/fedora-bootc-base-images/minimal/systemd-presets.yaml
+36:  # https://github.com/projectatomic/rpm-ostree/issues/1803
+
+./sources/fedora-bootc-base-images/minimal/postprocess-conf.yaml
+1:# This file configures things relevant to `rpm-ostree compose postprocess`.
+
+./sources/fedora-bootc-base-images/minimal/kernel-install.yaml
+8:    echo -e "# kernel-install will not try to run dracut and allow rpm-ostree to\n\
+
+./sources/fedora-bootc-base-images/minimal/basic-fixes.yaml
+28:    # with newer rpm-ostree: https://github.com/coreos/rpm-ostree/pull/5388#issuecomment-2971623787
+30:    # Because /var/roothome is also defined in rpm-ostree-0-integration.conf
+34:    # with newer rpm-ostree: https://github.com/coreos/rpm-ostree/pull/5388#issuecomment-2971623787
+
+./sources/fedora-bootc-base-images/minimal-plus/manifest.yaml
+45:  # rpm-ostree
+46:  - rpm-ostree nss-altfiles
+
+./sources/fedora-bootc-base-images/Containerfile
+23:# BOOTSTRAPPING: This can be any image that has rpm-ostree, selinux-policy-targeted
+26:RUN dnf -y install rpm-ostree selinux-policy-targeted python3
+28:# The input git repository has .repo files committed to git rpm-ostree has historically
+
+./sources/bootc/contrib/packaging/bootc.spec
+75:# A made up provides so that rpm-ostree can depend on it
+172:# https://github.com/coreos/rpm-ostree/issues/5420
+
+./sources/ostree/src/ostree/ot-main.h
+56: * https://github.com/projectatomic/rpm-ostree/commit/12c34bb2491a07079c911ef26401fee939e5573c.
+102:/* Copied from rpm-ostree's rpmostree-libbuiltin.h */
+
+./sources/fedora-bootc-base-images/bootc-base-imagectl.md
+35:implementation of the base image build uses `rpm-ostree`,
+52:The current implementation uses `rpm-ostree` on a manifest (treefile)
+107:### Using chunkah instead of rpm-ostree
+110:rpm-ostree for layer splitting. In this mode, chunkah reads the rootfs
+143:The default rechunking implementation also uses `rpm-ostree`. The `--chunkah`
+145:rpm-ostree.
+
+./sources/fedora-bootc-base-images/bootc-base-imagectl
+32:    rpmostree_argv = ['rpm-ostree', 'compose', 'rootfs']
+108:        # Work around https://github.com/coreos/rpm-ostree/pull/5322
+164:                'rpm-ostree',
+189:        o = subprocess.check_output(['rpm-ostree', 'compose', 'tree', '--print-only', fullpath])
+219:    cmd_rechunk.add_argument("--chunkah", help="Use chunkah instead of rpm-ostree (reads rootfs from /chunkah, writes OCI archive to stdout)", action='store_true')
+
+./sources/fedora-bootc-base-images/Justfile
+17:# These are required for the nested containerization used by rpm-ostree
+
+./sources/bootc/baseimage/README.md
+14:  this has configuration for kernel-install enabling rpm-ostree integration.
+
+./sources/bootc/tmt/tests/booted/test-image-pushpull-upgrade.nu
+97:        # Add a quoted karg using rpm-ostree if available
+98:        # Check rpm-ostree and rpm-ostreed service status before run rpm-ostree
+100:        rpm-ostree status
+101:        journalctl -u rpm-ostreed
+103:        print "Adding quoted karg via rpm-ostree to test ostree issue #3544"
+104:        rpm-ostree kargs --append=($quoted_karg)
+157:    # Verify the quoted karg added via rpm-ostree is still present
+210:    # Verify the quoted karg added via rpm-ostree is still present after upgrade
+
+./sources/bootc/baseimage/systemd/usr/lib/kernel/install.conf
+1:# kernel-install will not try to run dracut and allow rpm-ostree to
+
+./sources/ostree/tests/basic-test.sh
+735:# Test --union-identical <https://github.com/projectatomic/rpm-ostree/issues/982>
+
+./sources/ostree/tests/test-kargs.c
+293:  /* Test 1: Standard quoted value (as stored by rpm-ostree) */
+
+./sources/ostree/src/libostree/ostree-repo-commit.c
+1972:       * by rpm-ostree), or (from older versions of libostree) a tempfile if we
+4049:   * rpm-ostree.
+
+./sources/ostree/src/libostree/ostree-core.c
+2061:       * https://github.com/projectatomic/rpm-ostree/issues/885
+
+./sources/ostree/tests/kolainst/destructive/state-overlay.sh
+33:    rpm-ostree rebase :foobar
+114:    rpm-ostree upgrade
+
+./sources/ostree/tests/kolainst/destructive/staged-deploy.sh
+40:    ## TODO remove workaround for https://github.com/coreos/rpm-ostree/pull/2021
+41:    mkdir -p /var/lib/rpm-ostree/history
+42:    rpm-ostree cleanup -pr
+90:    rpm-ostree status
+135:    firstdeploycommit=$(rpm-ostree status --json | jq -r .deployments[0].checksum)
+138:    rpm-ostree cleanup -rp
+196:    rpm-ostree kargs --append=foo=bar
+
+./sources/ostree/tests/kolainst/destructive/staged-delay.sh
+22:rpm-ostree kargs --append=somedummykarg=1
+
+./sources/ostree/tests/kolainst/destructive/soft-reboot.sh
+177:  if rpm-ostree initramfs --enable; then
+184:    rpm-ostree cleanup -p
+187:    echo "warning: rpm-ostree initramfs --enable failed (dracut issue); skipping initramfs kernel-state check"
+190:  rpm-ostree kargs --append=foo=bar
+
+./sources/selinux-policy/policy/modules/kernel/files.fc
+254:# https://github.com/projectatomic/rpm-ostree/pull/959#issuecomment-325780234
+
+./sources/ostree/tests/kolainst/destructive/root-transient-ro.sh
+26:  rpm-ostree initramfs-etc --track /etc/ostree/prepare-root.conf
+
+./sources/fedora-systemd/systemd.spec
+1293:# and only if it's writable (it won't be in rpm-ostree).
+
+./sources/selinux-policy/policy/modules/kernel/domain.te
+635:	# This is needed purely for rpm-ostree (after --apply-live).
+
+./sources/ostree/tests/kolainst/destructive/overlay-initrds.sh
+7:# we don't just use `rpm-ostree initramfs-etc` here because we want to be able
+
+./sources/ostree/src/libostree/ostree-sysroot-deploy.c
+1438:   * what happens with rpm-ostree with Fedora today, until rpm-ostree learns the
+1462:       * the latter then, to make rpm-ostree work as is today.
+1512:       * someone doing a `systemctl restart rpm-ostreed` or a Ctrl-C of
+3306: * Derived from rpm-ostree's rust/src/bwrap.rs
+4145:   * shutdown, and also because e.g. rpm-ostree wants to own the cleanup
+
+./sources/ostree/tests/kolainst/destructive/kargs-proc-cmdline-quoted.sh
+13:# rpm-ostree stores as testparam="value with spaces" can appear in
+24:  rpm-ostree kargs --append='testparam="value with spaces"'
+37:  # Use $host_commit from libinsttest.sh (set via rpm-ostree status --json).
+
+./sources/bootc/hack/downgrade-kernel.sh
+23:        # TMPDIR=/var/tmp: works around an rpm-ostree bug
+
+./sources/ostree/tests/kolainst/destructive/kargs-edit-in-place.sh
+11:  sudo rpm-ostree kargs --append=somedummykarg=1
+
+./sources/ostree/tests/kolainst/destructive/finalization.sh
+34:  booted=$(rpm-ostree status --json | jq -r .deployments[0].checksum)
+55:  booted=$(rpm-ostree status --json | jq -r .deployments[0].checksum)
+
+./sources/fedora-systemd/changelog
+1600:  This fixes compatibility with rpm-ostree.
+
+./sources/ostree/tests/kolainst/destructive/boot-automount.sh
+25:    systemctl stop rpm-ostreed.service
+39:    rpm-ostree status --json
+57:    rpm-ostree status --json
+
+./sources/ostree/tests/kolainst/destructive/auto-prune.sh
+65:    systemctl stop rpm-ostreed
+118:rpm-ostree rebase :modkernel1
+127:rpm-ostree cleanup -bpr
+134:rpm-ostree rebase :modkernel1
+141:rpm-ostree rollback
+148:rpm-ostree rebase :modkernel2
+165:rpm-ostree rebase :modkernel2
+181:rpm-ostree rollback
+201:rpm-ostree rebase :modkernel1
+212:rpm-ostree rebase :modkernel1
+233:rpm-ostree rebase :modkernel3
+244:rpm-ostree rebase :modkernel3
+
+./sources/ostree/tests/kolainst/data-shared/libtest-core.sh
+9:# - https://github.com/coreos/rpm-ostree
+
+./sources/ostree/tests/kolainst/data-shared/libinsttest.sh
+68:rpmostree=$(which rpm-ostree 2>/dev/null)
+70:    skip "no rpm-ostree, at some point point this to raw ostree too"
+78:    rpm-ostree status --json | jq -r "${query}"
+
+./sources/ostree/tests/inst/Cargo.toml
+38:# See discussion in https://github.com/coreos/rpm-ostree/pull/2569#issuecomment-780569188
+39:rpmostree-client = { git = "https://github.com/coreos/rpm-ostree", tag = "v2021.3" }
+
+./sources/ostree/src/libostree/ostree-repo-pull.c
+1809:       * https://github.com/projectatomic/rpm-ostree/issues/630 */
+
+./sources/ostree/tests/inst/src/destructive.rs
+14://! Start a webserver, pointing rpm-ostree at the updated content.  We
+16://! rpm-ostreed, or rebooting normally, or an immediate forced reboot
+191:        "rpm-ostree upgrade
+300:        bash!("rpm-ostree status -v")?;
+312:/// In the case where we did a kill -9 of rpm-ostree, check the state
+461:            cmd!(sh, "systemctl stop rpm-ostreed").run()?;
+465:            cmd!(sh, "rpm-ostree cleanup -pbrm").run()?;
+501:                    cmd!(sh, "systemctl kill -s KILL rpm-ostreed")
+530:                    cmd!(sh, "systemctl stop rpm-ostreed")
+606:            cmd!(sh, "rpm-ostree cleanup -pr").run()?;
+636:            cmd!(sh, "rpm-ostree status").run()?;
+
+./sources/ostree/tests/inst/src/composefs.rs
+80:    // Note rpm-ostree initramfs-etc changes the final commit hash
+90:        "rpm-ostree initramfs-etc --track {BINDING_KEYPATH} --track {PREPARE_ROOT_PATH}"
+168:            cmd!(sh, "rpm-ostree kargs --append=foo=bar").run()?;
+185:                "rpm-ostree kargs --append=ostree.prepare-root.composefs=0"
+
+./sources/ostree/src/libostree/ostree-repo-checkout.c
+488:             * rpm-ostree wants for package layering.
+489:             * https://github.com/projectatomic/rpm-ostree/issues/982
+509:                 * with rpm-ostree pkg layering where we overlay from the pkgcache repo onto
+
+./sources/bootc/docs/src/relationships.md
+57:## Relationship with rpm-ostree
+60:rpm-ostree. Hence, when using a container source, `rpm-ostree upgrade` and
+63:### Differences from rpm-ostree
+73:such as `rpm-ostree install` or `rpm-ostree initramfs --enable`
+82:in both cases, so using e.g. `rpm-ostree kargs` will also work
+85:Overall, rpm-ostree is used in several important projects
+98:But all this said: *It will be supported to use both bootc and rpm-ostree together*; they are not exclusive.
+104:This will reduce the role of ostree, and hence break compatibility with rpm-ostree.
+106:ostree backend.  But once this happens there are no plans to teach rpm-ostree
+
+./sources/bootc/docs/src/package-managers.md
+102:Systems such as [rpm-ostree](https://github.com/coreos/rpm-ostree/) implement
+106:One aspect of how rpm-ostree implements this is by caching individual unpacked RPMs as ostree commits
+
+./sources/bootc/docs/src/building/users-and-groups.md
+140:[rpm-ostree](https://github.com/coreos/rpm-ostree).
+
+./sources/bootc/docs/src/building/kernel-arguments.md
+84:Other projects such as `rpm-ostree` do, via e.g. `rpm-ostree kargs`,
+86:files. Note an important detail is that `rpm-ostree kargs` always
+89:`rpm-ostree kargs` and bootc will interoperate as they both
+
+./sources/bootc/docs/src/installation.md
+12:base image; you will want to also `rpm-ostree install bootc` in your image builds currently.
+17:discussion of [relationships](relationships.md) which particularly covers interactions with rpm-ostree.
+
+./sources/bootc/docs/src/initramfs.md
+77:## The rpm-ostree client-side initramfs mechanism
+79:On rpm-ostree-managed systems, `rpm-ostree initramfs --enable` enables
+82:a local rpm-ostree modification in the deployment origin (a
+86:onto a new container-image deployment. It marks a deployment with rpm-ostree
+88:with an error such as "Deployment contains local rpm-ostree modifications".
+89:Running `rpm-ostree reset` removes the local modifications and allows bootc to
+91:configuration. It may remove other rpm-ostree package layering and overrides as
+93:`rpm-ostree initramfs --enable` for this workflow if the system is intended to
+96:[Relationship with rpm-ostree](relationships.md#relationship-with-rpm-ostree).
+
+./sources/bootc/docs/src/filesystem.md
+151:via `rpm-ostree kargs` or `/usr/lib/bootc/kargs.d`.
+
+./sources/bootc/docs/src/experimental-container-export.md
+74:and rpm-ostree plugin that would otherwise intercept `kernel-install` and
+75:delegate to rpm-ostree (which doesn't work outside an ostree deployment).
+
+./sources/bootc/docs/src/man/bootc-status.8.md
+27:### Detecting rpm-ostree vs bootc
+30:and tools like rpm-ostree end up sharing the same code and doing effectively the same thing.
+31:Hence, there isn't a mechanism to detect if a system "is bootc" or "is rpm-ostree".
+34:`rpm-ostree` must be used for mutation.
+
+./sources/selinux-policy/policy/modules/contrib/anaconda.fc
+9:/usr/bin/rpm-ostree     --  gen_context(system_u:object_r:install_exec_t,s0)
+11:/usr/libexec/rpm-ostreed --  gen_context(system_u:object_r:install_exec_t,s0)
+
+./sources/bootc/crates/tests-integration/src/anaconda.rs
+16://! The input container image must be a bootc/rpm-ostree image.  Before export,
+22://! - `/usr/lib/kernel/install.d/*-rpmostree.install` — rpm-ostree plugin removed
+
+./sources/bootc/crates/ostree-ext/README.md
+15:- https://github.com/coreos/rpm-ostree
+78:This is used by `rpm-ostree ex apply-live`.
+117:A good reference code base for generating "chunked" images is [rpm-ostree compose container-encapsulate](https://coreos.github.io/rpm-ostree/container/#converting-ostree-commits-to-new-base-images).  This is used to generate the current [Fedora CoreOS](https://quay.io/repository/fedora/fedora-coreos?tab=tags&tag=latest)
+135:But a project like rpm-ostree could hence support:
+138:$ rpm-ostree rebase ostree-remote-image:someremote:quay.io/exampleos/exampleos:stable
+141:(Along with the usual `rpm-ostree upgrade` knowing to pull that container image)
+
+./sources/bootc/crates/ostree-ext/tests/it/main.rs
+1998:// Today rpm-ostree vendors a stable ostree-rs-ext; this test
+2005:    let rpmostree = Utf8Path::new("/usr/bin/rpm-ostree");
+
+./sources/bootc/crates/ostree-ext/src/cli.rs
+6://! such as `rpm-ostree` can directly reuse it.
+
+./sources/ostree/docs/var.md
+74:For $reasons dnf has its own database for state distinct from the RPM database, which on rpm-ostree systems is in `/usr/share/rpm` (under the read-only bind mount, managed by OS updates).
+
+./sources/ostree/docs/related-projects.md
+94:there is work in the [rpm-ostree](https://github.com/projectatomic/rpm-ostree/)
+128:[rpm-ostree](https://github.com/projectatomic/rpm-ostree/) is aiming
+136:[rpm-ostree package layering](https://github.com/projectatomic/rpm-ostree/pull/107).
+165:[rpm-ostree](https://github.com/projectatomic/rpm-ostree/) which has quite
+301:file path instead of file hash). Overall, it is quite similar to rpm-ostree in
+304:## rpm-ostree
+
+./sources/ostree/docs/index.md
+59:Fedora derivatives use rpm-ostree (noted below):
+68:uses rpm-ostree as well.
+115:[rpm-ostree](https://github.com/projectatomic/rpm-ostree) is used by the
+
+./sources/bootc/crates/ostree-ext/src/container_utils.rs
+16:// See https://github.com/coreos/rpm-ostree/pull/3285#issuecomment-999101477
+
+./sources/ostree/docs/copying-deltas.md
+30:with a higher level tool such as `rpm-ostree`, via `rpm-ostree deploy :<to>`.
+
+./sources/bootc/crates/ostree-ext/src/chunking.rs
+598:/// If the current rpm-ostree commit to be encapsulated is not the one in which packing structure changes, then
+
+./sources/ostree/docs/composefs.md
+103:* <https://github.com/coreos/rpm-ostree/issues/337>
+
+./sources/ostree/docs/buildsystem-and-repos.md
+27:tool is [rpm-ostree](https://github.com/coreos/rpm-ostree) - it
+68:The above mentioned `rpm-ostree compose tree` chooses RPM as the value
+
+./sources/ostree/docs/adapting-existing.md
+203:This is essentially what [rpm-ostree](https://github.com/projectatomic/rpm-ostree/)
+204:does to support its [package layering model](https://coreos.github.io/rpm-ostree/administrator-handbook/#hybrid-imagepackaging-via-package-layering).
+
+./sources/bootc/crates/ostree-ext/src/container/store.rs
+186:/// A layering violation we'll carry for a bit to band-aid over <https://github.com/coreos/rpm-ostree/issues/4185>
+
+./sources/ostree/ci/rpmostree.sh
+2:# Build and run rpm-ostree's unit tests using the just-built ostree for this PR.
+18:pkg_builddep ostree rpm-ostree
+19:pkg_install rpm-ostree && rpm -e rpm-ostree
+21:# Duplicate of deps from ci/installdeps.sh in rpm-ostree for tests
+27:# From rpm-ostree/ci/vmcheck-provision.sh
+37:git clone --recursive --depth=1 -b ${RPMOSTREE_TAG} https://github.com/projectatomic/rpm-ostree
+38:cd rpm-ostree
+47:# Basic sanity test of rpm-ostree+new ostree by restarting rpm-ostreed
+
+./sources/bootc/crates/ostree-ext/src/container/deploy.rs
+146:        // Note also we do this under a feature gate to ensure rpm-ostree
+
+./sources/bootc/crates/ostree-ext/ci/ima.sh
+11:    rpm-ostree install ima-evm-utils
+
+./sources/bootc/crates/lib/src/utils.rs
+21:/// Try to look for keys injected by e.g. rpm-ostree requesting machine-local
+24:    // These are groups set in https://github.com/coreos/rpm-ostree/blob/27f72dce4f9b5c176ad030911c12354e2498c07d/rust/src/origin.rs#L23
+
+./sources/bootc/crates/lib/src/status.rs
+567:    // Show deployment serial (similar to Index in rpm-ostree)
+736:        // Show additional information in verbose mode similar to rpm-ostree
+740:            // Show the commit (equivalent to Base Commit in rpm-ostree)
+802:    // TODO consider rendering more ostree stuff here like rpm-ostree status does
+823:        // Show additional information in verbose mode similar to rpm-ostree
+846:    // TODO consider rendering more ostree stuff here like rpm-ostree status does
+
+./sources/bootc/crates/lib/src/cli.rs
+1295:    // If there's no specified image, let's be nice and check if the booted system is using rpm-ostree
+1303:                "Deployment contains local rpm-ostree modifications; cannot upgrade via bootc. You can run `rpm-ostree reset` to undo the modifications."
+
+./sources/selinux-policy/policy/modules/contrib/rhsmcertd.te
+183:# executes rpm-ostree (install_exec_t) to determine which packages are
+
+./sources/systemd/src/tmpfiles/offline-passwd.c
+56:        /* The directory list is hardcoded here: /etc is the standard, and rpm-ostree uses /usr/lib. This
+
+./sources/systemd/src/test/test-blockdev-util.c
+22:                 * some rpm-ostree distros */
+
+./sources/systemd/src/sysupdate/org.freedesktop.sysupdate1.policy
+29:            a user at the console, and rpm-ostree (generally) needs an "administrative user" at the computer.
+
+./sources/systemd/src/shared/verbs.c
+26:        /* Added to support use cases like rpm-ostree, where from %post scripts we only want to execute "preset",
+
+===== TRACKED SOURCE ROOTS =====
+bootc
+fedora-bootc-base-images
+fedora-rpm
+fedora-systemd
+ostree
+README.md
+rpm
+rpm-l10n
+selinux-policy
+selinux-userspace
+smithay
+systemd
+VERSIONS
+wayland
+wayland-protocols
+wlroots
+f35@fedora:~/sorabbyngo/sorabbyngo-os/fedora-base$ 

@@ -15,7 +15,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/sorabbyngo-os/fedora-base
-  FEDORA_VERSION: "45"
+  FEDORA_VERSION: "44"
 
 jobs:
   build:
@@ -34,8 +34,8 @@ jobs:
 
       - name: Verify os-release
         run: |
-          podman run --rm "${IMAGE}:build" sh -c \
-            '. /usr/lib/os-release && test "$ID" = sorabbyngo && test "$VERSION_ID" = "'"${FEDORA_VERSION}"'"'
+          podman run --rm -e EXPECTED_FEDORA_VERSION="${FEDORA_VERSION}" "${IMAGE}:build" sh -c \
+            '. /usr/lib/os-release && test "$ID" = sorabbyngo && test "$VERSION_ID" = "1.0" && test "$PRETTY_NAME" = "Sorabbyngo OS ONE 1.0 (Pre-alpha)" && test "$SORABBYNGO_BASE" = "Fedora ${EXPECTED_FEDORA_VERSION}"'
 
       - name: Push to GHCR (main and scheduled runs only)
         if: github.event_name != 'pull_request'
