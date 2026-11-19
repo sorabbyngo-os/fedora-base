@@ -1,7 +1,7 @@
 ARG FEDORA_VERSION=44
 FROM quay.io/fedora/fedora-bootc:${FEDORA_VERSION}
 ARG FEDORA_VERSION
-ARG PACKAGE_SETS="core security containers"
+ARG PACKAGE_SETS="core desktop security containers gnome"
 
 COPY images/packages-*.list /tmp/pkg/
 RUN set -eu; \
@@ -21,6 +21,9 @@ COPY overlays/identity/issue.net /usr/lib/issue.net
 COPY overlays/dracut/50-plymouth.conf /usr/lib/dracut/dracut.conf.d/50-plymouth.conf
 COPY overlays/plymouth/plymouthd.defaults /usr/share/plymouth/plymouthd.defaults
 COPY overlays/tmpfiles/sorabbyngo-plymouth.conf /usr/lib/tmpfiles.d/sorabbyngo-plymouth.conf
+COPY overlays/tmpfiles/sorabbyngo-gnome.conf /usr/lib/tmpfiles.d/sorabbyngo-gnome.conf
+COPY overlays/plymouth/sorabbyngo/ /usr/share/plymouth/themes/sorabbyngo/
+RUN plymouth-set-default-theme sorabbyngo
 RUN set -eu; set -- /usr/lib/modules/*; [ "$#" -eq 1 ]; kver="${1##*/}"; env DRACUT_NO_XATTR=1 dracut -vf "/usr/lib/modules/${kver}/initramfs.img" "$kver"
 
 RUN set -eu; \
@@ -35,4 +38,11 @@ RUN set -eu; \
 COPY presets/sorabbyngo.preset /usr/lib/systemd/system-preset/80-sorabbyngo.preset
 RUN systemctl preset-all --preset-mode=enable-only
 
+RUN rm -rf /var/cache/swcatalog /var/log/dnf5.log*
+RUN rm -rf /run/cups /run/selinux-policy /tmp/*
 RUN bootc container lint --fatal-warnings
+COPY overlays/gnome/vendor.conf /usr/share/gnome-initial-setup/vendor.conf
+
+# OS ONE Fastfetch branding
+COPY overlays/fastfetch/sorabbyngo-logo.png /usr/share/pixmaps/sorabbyngo-logo.png
+COPY overlays/fastfetch/etc/config.jsonc /usr/etc/fastfetch/config.jsonc

@@ -13,7 +13,7 @@ Sorabbyngo consumes Fedora bootc + RPM + systemd + SELinux.
   - Display protocols: sources/display/
 - We do not reimplement systemd or rpm; we vendor sources only for offline study/patching.
 
-Pinned base: Fedora 45 (see `FEDORA_VERSION` in images/Containerfile).
+Pinned base: Fedora 44 (see `FEDORA_VERSION` in images/Containerfile).
 
 ## Smithay source policy
 

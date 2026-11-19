@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Sorabbyngo OS ONE
+Description=Sorabbyngo OS ONE boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/sorabbyngo
+ScriptFile=/usr/share/plymouth/themes/sorabbyngo/sorabbyngo.script
