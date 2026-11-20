@@ -1,7 +1,8 @@
 ARG FEDORA_VERSION=44
 FROM quay.io/fedora/fedora-bootc:${FEDORA_VERSION}
 ARG FEDORA_VERSION
-ARG PACKAGE_SETS="core desktop security containers gnome"
+ARG DESKTOP=gnome
+ARG PACKAGE_SETS="core desktop security containers ${DESKTOP}"
 
 COPY images/packages-*.list /tmp/pkg/
 RUN set -eu; \
@@ -21,7 +22,7 @@ COPY overlays/identity/issue.net /usr/lib/issue.net
 COPY overlays/dracut/50-plymouth.conf /usr/lib/dracut/dracut.conf.d/50-plymouth.conf
 COPY overlays/plymouth/plymouthd.defaults /usr/share/plymouth/plymouthd.defaults
 COPY overlays/tmpfiles/sorabbyngo-plymouth.conf /usr/lib/tmpfiles.d/sorabbyngo-plymouth.conf
-COPY overlays/tmpfiles/sorabbyngo-gnome.conf /usr/lib/tmpfiles.d/sorabbyngo-gnome.conf
+COPY overlays/tmpfiles/sorabbyngo-base.conf /usr/lib/tmpfiles.d/sorabbyngo-base.conf
 COPY overlays/plymouth/sorabbyngo/ /usr/share/plymouth/themes/sorabbyngo/
 RUN plymouth-set-default-theme sorabbyngo
 RUN set -eu; set -- /usr/lib/modules/*; [ "$#" -eq 1 ]; kver="${1##*/}"; env DRACUT_NO_XATTR=1 dracut -vf "/usr/lib/modules/${kver}/initramfs.img" "$kver"
@@ -35,14 +36,18 @@ RUN set -eu; \
     grep -qx 'Sorabbyngo OS ONE' /usr/lib/issue; \
     grep -qx 'Sorabbyngo OS ONE' /usr/lib/issue.net
 
-COPY presets/sorabbyngo.preset /usr/lib/systemd/system-preset/80-sorabbyngo.preset
-RUN systemctl preset-all --preset-mode=enable-only
+COPY presets/sorabbyngo.preset /tmp/sorabbyngo-presets/gnome.preset
+COPY presets/sorabbyngo-xfce.preset /tmp/sorabbyngo-presets/xfce.preset
+RUN set -eu; case "${DESKTOP}" in gnome|xfce) install -D "/tmp/sorabbyngo-presets/${DESKTOP}.preset" /usr/lib/systemd/system-preset/80-sorabbyngo.preset ;; *) echo "Unsupported DESKTOP: ${DESKTOP}" >&2; exit 1 ;; esac; rm -rf /tmp/sorabbyngo-presets; systemctl preset-all --preset-mode=enable-only
+RUN ln -sfn /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
 
 RUN rm -rf /var/cache/swcatalog /var/log/dnf5.log*
 RUN rm -rf /run/cups /run/selinux-policy /tmp/*
+RUN rm -f /var/lib/xkb/README.compiled
 RUN bootc container lint --fatal-warnings
-COPY overlays/gnome/vendor.conf /usr/share/gnome-initial-setup/vendor.conf
+COPY overlays/gnome/vendor.conf /tmp/sorabbyngo-gnome-vendor.conf
+RUN if [ "${DESKTOP}" = gnome ]; then install -D /tmp/sorabbyngo-gnome-vendor.conf /usr/share/gnome-initial-setup/vendor.conf; fi; rm -f /tmp/sorabbyngo-gnome-vendor.conf
 
 # OS ONE Fastfetch branding
 COPY overlays/fastfetch/sorabbyngo-logo.png /usr/share/pixmaps/sorabbyngo-logo.png
-COPY overlays/fastfetch/etc/config.jsonc /usr/etc/fastfetch/config.jsonc
+COPY overlays/fastfetch/etc/config.jsonc /etc/fastfetch/config.jsonc
