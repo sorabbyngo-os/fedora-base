@@ -1,1 +1,2 @@
 enable gdm.service
+disable sddm.service

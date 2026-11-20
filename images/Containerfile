@@ -1,11 +1,13 @@
 ARG FEDORA_VERSION=44
 FROM quay.io/fedora/fedora-bootc:${FEDORA_VERSION}
 ARG FEDORA_VERSION
-ARG PACKAGE_SETS="core desktop security containers gnome"
+ARG DESKTOP=gnome
+ARG PACKAGE_SETS="core desktop security containers"
 
 COPY images/packages-*.list /tmp/pkg/
 RUN set -eu; \
-    for s in ${PACKAGE_SETS}; do \
+    case "${DESKTOP}" in gnome|kde) ;; *) echo "Unsupported DESKTOP=${DESKTOP}" >&2; exit 1 ;; esac; \
+    for s in ${PACKAGE_SETS} ${DESKTOP}; do \
       sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "/tmp/pkg/packages-${s}.list"; \
     done | sort -u > /tmp/packages.txt; \
     dnf -y install --setopt=install_weak_deps=False $(cat /tmp/packages.txt); \
@@ -20,10 +22,29 @@ COPY overlays/identity/issue /usr/lib/issue
 COPY overlays/identity/issue.net /usr/lib/issue.net
 COPY overlays/dracut/50-plymouth.conf /usr/lib/dracut/dracut.conf.d/50-plymouth.conf
 COPY overlays/plymouth/plymouthd.defaults /usr/share/plymouth/plymouthd.defaults
-COPY overlays/tmpfiles/sorabbyngo-plymouth.conf /usr/lib/tmpfiles.d/sorabbyngo-plymouth.conf
-COPY overlays/tmpfiles/sorabbyngo-gnome.conf /usr/lib/tmpfiles.d/sorabbyngo-gnome.conf
 COPY overlays/plymouth/sorabbyngo/ /usr/share/plymouth/themes/sorabbyngo/
-RUN plymouth-set-default-theme sorabbyngo
+COPY overlays/tmpfiles/sorabbyngo-plymouth.conf /tmp/sorabbyngo-overlays/sorabbyngo-plymouth.conf
+COPY overlays/tmpfiles/sorabbyngo-gnome.conf /tmp/sorabbyngo-overlays/sorabbyngo-gnome.conf
+COPY overlays/tmpfiles/sorabbyngo-kde.conf /tmp/sorabbyngo-overlays/sorabbyngo-kde.conf
+COPY presets/sorabbyngo.preset /tmp/sorabbyngo-presets/gnome.preset
+COPY presets/sorabbyngo-kde.preset /tmp/sorabbyngo-presets/kde.preset
+COPY overlays/gnome/vendor.conf /tmp/sorabbyngo-overlays/gnome-vendor.conf
+COPY overlays/sddm/sorabbyngo-x11.conf /tmp/sorabbyngo-overlays/sorabbyngo-x11.conf
+
+RUN set -eu; \
+    install -D -m 0644 /tmp/sorabbyngo-overlays/sorabbyngo-plymouth.conf /usr/lib/tmpfiles.d/sorabbyngo-plymouth.conf; \
+    install -D -m 0644 "/tmp/sorabbyngo-overlays/sorabbyngo-${DESKTOP}.conf" "/usr/lib/tmpfiles.d/sorabbyngo-${DESKTOP}.conf"; \
+    install -D -m 0644 "/tmp/sorabbyngo-presets/${DESKTOP}.preset" /usr/lib/systemd/system-preset/80-sorabbyngo.preset; \
+    if [ "${DESKTOP}" = gnome ]; then \
+      install -D -m 0644 /tmp/sorabbyngo-overlays/gnome-vendor.conf /usr/share/gnome-initial-setup/vendor.conf; \
+    fi; \
+    if [ "${DESKTOP}" = kde ]; then \
+      install -D -m 0644 /tmp/sorabbyngo-overlays/sorabbyngo-x11.conf /usr/lib/sddm/sddm.conf.d/99-sorabbyngo-x11.conf; \
+      rm -f /usr/lib/sddm/sddm.conf.d/plasma-wayland.conf; \
+    fi; \
+    rm -rf /tmp/sorabbyngo-overlays /tmp/sorabbyngo-presets; \
+    plymouth-set-default-theme sorabbyngo
+
 RUN set -eu; set -- /usr/lib/modules/*; [ "$#" -eq 1 ]; kver="${1##*/}"; env DRACUT_NO_XATTR=1 dracut -vf "/usr/lib/modules/${kver}/initramfs.img" "$kver"
 
 RUN set -eu; \
@@ -35,13 +56,11 @@ RUN set -eu; \
     grep -qx 'Sorabbyngo OS ONE' /usr/lib/issue; \
     grep -qx 'Sorabbyngo OS ONE' /usr/lib/issue.net
 
-COPY presets/sorabbyngo.preset /usr/lib/systemd/system-preset/80-sorabbyngo.preset
 RUN systemctl preset-all --preset-mode=enable-only
 
 RUN rm -rf /var/cache/swcatalog /var/log/dnf5.log*
 RUN rm -rf /run/cups /run/selinux-policy /tmp/*
-RUN bootc container lint --fatal-warnings
-COPY overlays/gnome/vendor.conf /usr/share/gnome-initial-setup/vendor.conf
+RUN rm -rf /run/sddm /var/lib/authselect/checksum /var/lib/xkb && bootc container lint --fatal-warnings
 
 # OS ONE Fastfetch branding
 COPY overlays/fastfetch/sorabbyngo-logo.png /usr/share/pixmaps/sorabbyngo-logo.png
